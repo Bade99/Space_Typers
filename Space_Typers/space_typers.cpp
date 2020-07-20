@@ -92,6 +92,69 @@ bool game_check_collision_point_to_rc(v2_f32 p, rc r) {
     return p.x > (r.pos.x-r.radius.x)&& p.x < (r.pos.x + r.radius.x) && p.y >(r.pos.y - r.radius.y) && p.y < (r.pos.y + r.radius.y);
 }
 
+png DEBUG_load_png(const char* filename) {
+    png res{0};
+    auto [img_mem, img_sz] = platform_read_entire_file(filename);
+    if (img_mem) {
+        //platform_write_entire_file("C:/Users/Brenda-Vero-Frank/Desktop/testfile.txt",background_bmp_mem,background_bmp_sz);
+        int width, height, channels;
+        u8* bytes = stbi_load_from_memory((u8*)img_mem, img_sz, &width, &height, &channels, 0); //NOTE: this interface always assumes 8 bits per component
+        platform_free_file_memory(img_mem);
+        if (bytes) {
+            res.mem = bytes;
+            res.width = width;
+            res.height = height;
+            res.channels = channels;
+            res.bytes_per_channel = 1; //NOTE: this interface always assumes 8 bits per component
+
+            u8* img_row = (u8*)res.mem; //INFO: R and B values need to be swapped
+            int img_pitch = res.width * res.channels * res.bytes_per_channel;
+            for (int y = 0; y < res.height; y++) {
+                u32* img_pixel = (u32*)img_row;
+                for (int x = 0; x < res.width; x++) {
+                    //AARRGGBB
+                    *img_pixel++ = (*img_pixel & 0xFF00FF00) | ((*img_pixel & 0x00FF0000)>>16) | ((*img_pixel & 0x000000FF) << 16); //TODO(fran): learn more about this, there are probably simpler and better ways to do it
+                }
+                img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+            }
+
+
+        }
+    }
+    return res;
+}
+
+void DEBUG_unload_png(png* img) {
+    stbi_image_free(img->mem);
+    //TODO(fran): zero the other members?
+}
+
+void game_render_img(game_framebuffer* buf, v2_f32 pos, png* img) {
+
+    v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
+    v2_i32 max = { round_f32_to_i32(pos.x+img->width), round_f32_to_i32(pos.y+img->height) };
+
+    if (min.x < 0)min.x = 0;
+    if (min.y < 0)min.y = 0;
+    if (max.x > buf->width)max.x = buf->width;
+    if (max.y > buf->height)max.y = buf->height;
+
+    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
+    u8* img_row = (u8*)img->mem;
+    int img_pitch = img->width * img->channels * img->bytes_per_channel;
+    for (int y = min.y; y < max.y; y++) {
+        u32* pixel = (u32*)row;
+        u32* img_pixel = (u32*)img_row;
+        for (int x = min.x; x < max.x; x++) {
+            //AARRGGBB
+            *pixel++ = *img_pixel++;
+        }
+        row += buf->pitch;
+        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+    }
+
+}
+
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
     game_assert(sizeof(game_state) <= memory->permanent_storage_sz);
     game_state* game_st = (game_state*)memory->permanent_storage;
@@ -101,6 +164,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //NOTE:since our worlds are going to be very small we wont need to do virtualized space like Handmade Hero (day 33), but the idea is there if we decide to reuse the engine for something bigger
 
     //IDEA: pixel art assets so we can create them fast, Im not sure how well they'll look next to the text for the words, maybe some font can fix that
+
+    //IDEA NOTE: text autocomplete makes you worse at typing, we want to train people to be able to write everything themselves
+
+    //NOTE IDEA: I see an aesthetic with oranges and white, warm colors, reds
 
     //game_level_map lvl_map;
     //lvl_map.origin = { 0,0 };
@@ -154,11 +221,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_st->world.stages[0].lvls[1].words[0].rect.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].words[0].color = { 0.f,0.f,1.f,1.f };
 
-        /*auto [background_bmp_mem, background_bmp_sz] = platform_read_entire_file(__FILE__);
-        if (background_bmp_mem) {
-            platform_write_entire_file("C:/Users/Brenda-Vero-Frank/Desktop/testfile.txt",background_bmp_mem,background_bmp_sz);
-            platform_free_file_memory(background_bmp_mem);
-        }*/
+        game_st->DEBUG_background = DEBUG_load_png("assets/img/dark_night_sky.png"); //TODO(fran): release mem DEBUG_unload_png(&background);
 
         memory->is_initialized = true; //TODO(fran): should the platform layer do this?
     }
@@ -220,6 +283,12 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     game_render_rectangle(frame_buf, { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height }, { 0,.5f,0.f,.5f });
     //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
+
+    game_render_img(frame_buf, { -100,10 }, &game_st->DEBUG_background); //TODO(fran): correct clipping when leaving the screen from the left or top
+    game_render_img(frame_buf, { 1500,300 }, &game_st->DEBUG_background);
+    game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); //TODO(fran): correct clipping when leaving the screen from the left or top
+    game_render_img(frame_buf, { 500,800 }, &game_st->DEBUG_background); //TODO(fran): correct clipping when leaving the screen from the left or top
+    //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
 

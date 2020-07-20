@@ -37,7 +37,7 @@ void _my_assert(const wchar_t* exp, const wchar_t* file, unsigned int line) {
     //std::terminate(); //TODO(fran): maybe just write to null
 }
 
-#define assert(expression) (void)(                                                       \
+#define win32_assert(expression) (void)(                                                       \
             (!!(expression)) ||                                                              \
             (_my_assert(_CRT_WIDE(#expression), _CRT_WIDE(__FILE__), (unsigned)(__LINE__)), 0) || \
             (std::terminate(), 0) \
@@ -258,11 +258,11 @@ void DirectSound_Init(HWND wnd, u32 samples_per_sec, u32 buf_sz) {
                     if (SUCCEEDED(ds->CreateSoundBuffer(&desc, &primary_buf, 0))) {
                         if (SUCCEEDED(primary_buf->SetFormat(&format))) {
                         }
-                        else { assert(0); }//TODO(fran): LOG
+                        else { win32_assert(0); }//TODO(fran): LOG
                     }
-                    else { assert(0); }//TODO(fran): LOG
+                    else { win32_assert(0); }//TODO(fran): LOG
             }
-            else { assert(0); }//TODO(fran): LOG
+            else { win32_assert(0); }//TODO(fran): LOG
 
             DSBUFFERDESC secondary_desc;
             ZeroMemory(&secondary_desc, sizeof(secondary_desc));
@@ -273,7 +273,7 @@ void DirectSound_Init(HWND wnd, u32 samples_per_sec, u32 buf_sz) {
 
             if (SUCCEEDED(ds->CreateSoundBuffer(&secondary_desc, &secondary_buf, 0))) {
             }
-            else { assert(0); }//TODO(fran): LOG
+            else { win32_assert(0); }//TODO(fran): LOG
 
         }
         else {}//TODO(fran): LOG
@@ -305,7 +305,7 @@ void win32_fill_sound_buffer(sound_output* dest_buf, DWORD byte_to_lock, DWORD b
         secondary_buf->Unlock(reg1, reg1_sz, reg2, reg2_sz);
 
     }
-    //else assert(0); //TODO(fran): there are bugs, this gets called sometimes
+    //else win32_assert(0); //TODO(fran): there are bugs, this gets called sometimes
 }
 
 void win32_ClearSoundBuffer(sound_output* sound_out) {
@@ -408,7 +408,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     HWND hwnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, window_sz.cx, window_sz.cy+50/*TODO(fran): take into account the window frame*/, nullptr, nullptr, hInstance, nullptr);
 
-    assert(hwnd);
+    win32_assert(hwnd);
 
     ShowWindow(hwnd, nCmdShow);//TODO(fran): remove
     UpdateWindow(hwnd);
@@ -473,7 +473,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     game_mem.permanent_storage = VirtualAlloc(base_address, total_sz, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE); //TODO(fran): use large pages
     game_mem.transient_storage = (u8*)game_mem.permanent_storage + game_mem.permanent_storage_sz;
     
-    assert(game_mem.permanent_storage && samples && frame_backbuffer.bytes);
+    win32_assert(game_mem.permanent_storage && samples && frame_backbuffer.bytes);
 
     MSG msg{0};
 
@@ -617,7 +617,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             if (safe_write_cur < play_cur)
                 safe_write_cur += sound_out.secondary_buf_sz;
 
-            assert(safe_write_cur >= play_cur);
+            win32_assert(safe_write_cur >= play_cur);
             sound_out.safety_bytes = (DWORD)(((f32)(sound_out.samples_per_sec * sound_out.bytes_per_sample) / (f32)game_update_hz) / 2.f); //TODO(fran): calculate this variance for real to find a reasonable value
             safe_write_cur += sound_out.safety_bytes;
             bool audio_card_is_low_latency = safe_write_cur < expected_frame_boundary_byte;
@@ -765,7 +765,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 inline double GetPCFrequency() {
     LARGE_INTEGER li;
-    assert(QueryPerformanceFrequency(&li));
+    win32_assert(QueryPerformanceFrequency(&li));
     return double(li.QuadPart); //seconds
 }
 
@@ -939,7 +939,7 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 }
 
 u32 safe_u64_to_u32(u64 n) {
-    assert(n <= 0xFFFFFFFF); //TODO(fran): u32 max and min
+    win32_assert(n <= 0xFFFFFFFF); //TODO(fran): u32 max and min
     return (u32)n;
 }
 

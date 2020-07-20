@@ -7,6 +7,8 @@
 
 #include<utility> //std::pair
 
+#include "space_typers_img.h" //TODO(fran): create separate .h for game specific things
+
 #if _DEBUG
 #define game_assert(expression) if(!(expression)){*(int*)0=0;}
 #else
@@ -95,6 +97,11 @@ struct game_controller_input {//TODO(fran): this struct probably needs rearrangi
         };
 #pragma warning( pop )
     };
+};
+
+struct png {
+    int width, height, channels, bytes_per_channel;
+    void* mem;
 };
 
 struct game_input {
@@ -189,6 +196,9 @@ struct game_state {
     v2_f32 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena memory_arena;
+
+    png DEBUG_background;
+
 };
 
 struct game_memory { //We are gonna be taking the handmade hero route, to see how it goes and if it is something that I like when the thing gets complex
