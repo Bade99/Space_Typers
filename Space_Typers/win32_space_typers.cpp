@@ -14,6 +14,7 @@
 #include <string>
 #include <random>
 
+//INFO: if we do load the game dinamically as a dll change this to the .h
 #include "space_typers.cpp" //INFO: disable compilation of .cpp in properties, that way we get only one translation unit that is win32_space_typers.cpp
 
 #include <windows.h>
@@ -26,6 +27,8 @@
 //Things I learned from this project:
 
 //At the beginnning, when I was trying to make a better determination for dt and wanted to be able to wait on the render from WM_PAINT, I learned that I cant wait on paint, sooner or later someone from the game thread needs to send a message to the main one that cant be asynced (eg. setwindowpos for positionion a word, since it was a win32 static control) -> State and View cant be coupled
+
+//INFO: Handmade Hero eps 21 through 25 talk about live code editing and game recording, if I feel like implementing that at some point, for now I'll just go simple and see how much I suffer for not having those features
 
 void _my_assert(const wchar_t* exp, const wchar_t* file, unsigned int line) {
     wchar_t txt[1024];
@@ -79,21 +82,6 @@ WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
-typedef uint8_t u8; //prepping for jai
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
-
-typedef float f32;
-typedef double f64;
-
-typedef wchar_t utf16;
-
 struct win32_framebuffer {
     void* bytes{ 0 };
     BITMAPINFO nfo;
@@ -109,7 +97,8 @@ struct sound_output {
     u32 runningsampleindex;
     int bytes_per_sample;
     int secondary_buf_sz;
-    int latency_sample_count;
+    //int latency_sample_count;
+    DWORD safety_bytes;
 };
 
 #define rc_width(r) (r.right >= r.left ? r.right - r.left : r.left - r.right )
@@ -146,7 +135,7 @@ void ResizeFramebuffer(win32_framebuffer* buf, int width, int height) {
 }
 
 void win32_render_to_screen(HDC dc, RECT r, win32_framebuffer* buf) {
-    StretchDIBits(dc, r.left, r.top, rc_width(r), rc_height(r), 0, 0, buf->width, buf->height, buf->bytes, &buf->nfo, DIB_RGB_COLORS, SRCCOPY);
+    StretchDIBits(dc, r.left, r.top, buf->width/*rc_width(r)*/, buf->height/*rc_height(r)*/, 0, 0, buf->width, buf->height, buf->bytes, &buf->nfo, DIB_RGB_COLORS, SRCCOPY);
 }
 
 constexpr const utf16* words[] = { L"canción",L"pequeño",L"año",L"hola",L"especial",L"duda",L"belleza",L"felicidad",L"tristeza",L"libertad",L"hermandad",L"durabilidad" };
@@ -250,13 +239,6 @@ void DirectSound_Init(HWND wnd, u32 samples_per_sec, u32 buf_sz) {
         direct_sound_create* DirectSound_Create = (direct_sound_create*)GetProcAddress(DirectSoundLib, "DirectSoundCreate");
         LPDIRECTSOUND ds;
         if (DirectSound_Create && SUCCEEDED(DirectSound_Create(0, &ds,0))) {
-            ds->SetCooperativeLevel(wnd, DSSCL_PRIORITY);
-            LPDIRECTSOUNDBUFFER primary_buf;
-            DSBUFFERDESC desc;
-            ZeroMemory(&desc, sizeof(desc));
-            desc.dwSize = sizeof(desc);
-            desc.dwFlags = DSBCAPS_PRIMARYBUFFER; //TODO(fran): check other flags
-
             WAVEFORMATEX format;
             format.wFormatTag = WAVE_FORMAT_PCM;//TODO(fran): there are other formats
             format.nChannels = 2;
@@ -265,17 +247,27 @@ void DirectSound_Init(HWND wnd, u32 samples_per_sec, u32 buf_sz) {
             format.nBlockAlign = (format.nChannels * format.wBitsPerSample) / 8;
             format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
             format.cbSize = 0;
-            if (SUCCEEDED(ds->CreateSoundBuffer(&desc, &primary_buf, 0))) {
-                if (SUCCEEDED(primary_buf->SetFormat(&format))) {
-                }
-                else { assert(0); }//TODO(fran): LOG
+
+            if (SUCCEEDED(ds->SetCooperativeLevel(wnd, DSSCL_PRIORITY))) {
+                LPDIRECTSOUNDBUFFER primary_buf;
+                    DSBUFFERDESC desc;
+                    ZeroMemory(&desc, sizeof(desc));
+                    desc.dwSize = sizeof(desc);
+                    desc.dwFlags = DSBCAPS_PRIMARYBUFFER; //TODO(fran): check other flags
+
+                    if (SUCCEEDED(ds->CreateSoundBuffer(&desc, &primary_buf, 0))) {
+                        if (SUCCEEDED(primary_buf->SetFormat(&format))) {
+                        }
+                        else { assert(0); }//TODO(fran): LOG
+                    }
+                    else { assert(0); }//TODO(fran): LOG
             }
             else { assert(0); }//TODO(fran): LOG
 
             DSBUFFERDESC secondary_desc;
             ZeroMemory(&secondary_desc, sizeof(secondary_desc));
             secondary_desc.dwSize = sizeof(secondary_desc);
-            secondary_desc.dwFlags = 0; //TODO(fran): check other flags
+            secondary_desc.dwFlags = DSBCAPS_GETCURRENTPOSITION2; //TODO(fran): check other flags
             secondary_desc.lpwfxFormat = &format;
             secondary_desc.dwBufferBytes = buf_sz;
 
@@ -288,7 +280,7 @@ void DirectSound_Init(HWND wnd, u32 samples_per_sec, u32 buf_sz) {
     }
 }
 
-void FillSoundBuffer(sound_output* dest_buf, DWORD byte_to_lock, DWORD bytes_to_write, game_soundbuffer* source_buf) {
+void win32_fill_sound_buffer(sound_output* dest_buf, DWORD byte_to_lock, DWORD bytes_to_write, game_soundbuffer* source_buf) {
     void* reg1;
     void* reg2;
     DWORD reg1_sz, reg2_sz;
@@ -334,21 +326,29 @@ void win32_ClearSoundBuffer(sound_output* sound_out) {
 }
 
 void win32_process_digital_button(game_button_state* new_state, bool is_down) {
-    assert(new_state->ended_down != is_down);
-    new_state->ended_down = is_down;
-    new_state->half_transition_count++;
+    if (new_state->ended_down != is_down) {
+        new_state->ended_down = is_down;
+        new_state->half_transition_count++;
+    }
 }
 
 void win32_DEBUG_draw_vertical(win32_framebuffer* frame_backbuffer, int x, int top, int bottom, DWORD color) {
-    u8* pixel = (u8*)frame_backbuffer->bytes + x* frame_backbuffer->bytes_per_pixel + top*frame_backbuffer->pitch;
-    for (int y = top; y < bottom; y++) {
-        *(u32*)pixel = color;
-        pixel += frame_backbuffer->pitch;
+    if (top < 0) top = 0;
+    if (bottom > frame_backbuffer->height) bottom = frame_backbuffer->height;
+    
+    if (x >= 0 && x < frame_backbuffer->width) {
+
+        u8* pixel = (u8*)frame_backbuffer->bytes + x * frame_backbuffer->bytes_per_pixel + top * frame_backbuffer->pitch;
+        for (int y = top; y < bottom; y++) {
+            *(u32*)pixel = color;
+            pixel += frame_backbuffer->pitch;
+        }
     }
 }
 
 
 u32 win32_get_refresh_rate_hz(HWND wnd) {
+    //TODO(fran): this may be simpler with GetDeviceCaps
     HMONITOR mon = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST); //TODO(fran): should it directly receive the hmonitor?
     if (mon) {
         MONITORINFOEX nfo;
@@ -403,8 +403,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     // Perform application initialization:
 
+    SIZE window_sz = { 1920,1080 };
+
     HWND hwnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+        CW_USEDEFAULT, 0, window_sz.cx, window_sz.cy+50/*TODO(fran): take into account the window frame*/, nullptr, nullptr, hInstance, nullptr);
 
     assert(hwnd);
 
@@ -422,7 +424,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     win32_framebuffer frame_backbuffer;
 
-    ResizeFramebuffer(&frame_backbuffer, 1920, 1080);
+    ResizeFramebuffer(&frame_backbuffer, window_sz.cx, window_sz.cy);
 
     sound_output sound_out;
     sound_out.samples_per_sec = 48000; //change to sample_rate
@@ -430,7 +432,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     sound_out.runningsampleindex = 0;
     sound_out.bytes_per_sample = sizeof(i16) * 2;
     sound_out.secondary_buf_sz = sound_out.samples_per_sec * sound_out.bytes_per_sample;
-    sound_out.latency_sample_count = (sound_out.samples_per_sec / 50); //TODO(fran): this should divide by the game update hz
+    //sound_out.latency_sample_count = (sound_out.samples_per_sec / 50); //TODO(fran): this should divide by the game update hz
 
     f32 audio_latency_sec;
     DWORD audio_latency_bytes;
@@ -442,7 +444,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     secondary_buf->Play(0, 0, DSBPLAY_LOOPING);
 
 #if _DEBUG
-    struct DEBUG_sound_cursor { DWORD play, write; };
+    struct DEBUG_sound_cursor { DWORD flip_play, flip_write, output_play, output_write, output_location, output_byte_count, expected_flip_play; };
     DEBUG_sound_cursor DEBUG_last_play_cur[40] = {0};
     int DEBUG_last_play_cur_index=0;
 #endif
@@ -468,7 +470,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     game_mem.permanent_storage_sz = Megabytes(1);
     game_mem.transient_storage_sz = Megabytes(1);
     u32 total_sz = game_mem.permanent_storage_sz + game_mem.transient_storage_sz;
-    game_mem.permanent_storage = VirtualAlloc(base_address, total_sz, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+    game_mem.permanent_storage = VirtualAlloc(base_address, total_sz, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE); //TODO(fran): use large pages
     game_mem.transient_storage = (u8*)game_mem.permanent_storage + game_mem.permanent_storage_sz;
     
     assert(game_mem.permanent_storage && samples && frame_backbuffer.bytes);
@@ -482,21 +484,31 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     QueryPerformanceCounter(&last_counter);
 
     int monitor_refresh_hz = 60;
+    int game_update_hz = 30;
 
     bool sound_is_valid = false;
-    DWORD last_play_cursor = 0;
-    DWORD last_write_cursor = 0;
+
+#if _DEBUG
+    bool pause = false;
+#endif
+
+    LARGE_INTEGER flip_wall_clock; QueryPerformanceCounter(&flip_wall_clock);
 
     bool run = true;
     //New message loop, does not stop when there are no more messages
     while (run) {
         monitor_refresh_hz = win32_get_refresh_rate_hz(hwnd);//TODO(fran): find a way to detect refresh rate changes
+        game_update_hz = (int)((f32)monitor_refresh_hz / 2.f);
+        f32 target_sec_per_frame = 1.f / (f32)game_update_hz;
+
         ZeroMemory(&new_input.controller, sizeof(new_input.controller));
-        for (int i = 0; i < ARRAYSIZE(new_input.controller.buttons); i++)
-            new_input.controller.buttons[i].ended_down = old_input.controller.buttons[i].ended_down;
+        for (int i = 0; i < ARRAYSIZE(new_input.controller.persistent_buttons); i++)
+            new_input.controller.persistent_buttons[i].ended_down = old_input.controller.persistent_buttons[i].ended_down;
+
+        new_input.dt_sec = target_sec_per_frame; //TODO(fran): this should be dt_per_sec
 
         while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) { //NOTE IMPORTANT: if you put hwnd in the second parameter you are missing lots of messages, eg WM_QUIT and msgs related to changing the keyboard eg. alt+shift
-            if(msg.message==WM_QUIT) run = false; //TODO(fran): should I leave this in wm_destroy so I dont have to pay for this branching?
+            if (msg.message == WM_QUIT) run = false; //TODO(fran): should I leave this in wm_destroy so I dont have to pay for this branching?
 
             switch (msg.message) {
             case WM_SYSKEYDOWN:
@@ -504,11 +516,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             case WM_KEYDOWN:
             case WM_KEYUP:
             {
+                //TODO(fran): check key repeat
                 u32 vkcode = (u32)msg.wParam;
                 bool was_down = (msg.lParam & (1 << 30)) != 0;
                 bool is_down = (msg.lParam & (1 << 31)) == 0;
                 if (was_down != is_down) {
-                    if (vkcode == 'W' ||vkcode == VK_UP) { //TODO(fran): rebindable keys
+                    if (vkcode == 'W' || vkcode == VK_UP) { //TODO(fran): is_down and was_down are going to be incorrect I believe since we are doing it as if they were the same key //TODO(fran): rebindable keys
                         win32_process_digital_button(&new_input.controller.up, is_down);
                     }
                     else if (vkcode == 'A' || vkcode == VK_LEFT) {
@@ -520,12 +533,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                     else if (vkcode == 'D' || vkcode == VK_RIGHT) {
                         win32_process_digital_button(&new_input.controller.right, is_down);
                     }
-                    else if (vkcode == VK_SPACE ||vkcode==VK_RETURN) {
+                    else if (vkcode == VK_SPACE || vkcode == VK_RETURN) {
                         win32_process_digital_button(&new_input.controller.enter, is_down);
                     }
-                    else if (vkcode == VK_ESCAPE) {
+                    else if (vkcode == VK_ESCAPE) { //TODO(fran): we should also have keys that only activate for one frame after pressed, not waiting for the key_up
                         win32_process_digital_button(&new_input.controller.back, is_down);
                     }
+#if _DEBUG
+                    else if (vkcode == 'P') {
+                        if (is_down) pause = !pause;
+                    }
+#endif
                 }
                 break;
             }
@@ -541,21 +559,76 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             }
             //INFO: I still want to process every msg since I leave windows to take care of WM_CHAR (I know TranslateMessage emits some WM_CHAR but I dont know if there are others that do too)
             TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            DispatchMessage(&msg); //TODO(fran): disable windows' erase background, when we resize the entire screen turns to the background color
         }
+
+#if _DEBUG
+        if(pause) continue;
+#endif
+        POINT mouse_pos;
+        GetCursorPos(&mouse_pos);
+        ScreenToClient(hwnd, &mouse_pos);
+        new_input.controller.mouse = { mouse_pos.x,mouse_pos.y,0 }; //TODO(fran): mousewheel
+        win32_process_digital_button(&new_input.controller.mouse_buttons[0], GetKeyState(VK_LBUTTON) & (1 << 15)); //TODO(fran): maybe this would be done better in the message loop
+        win32_process_digital_button(&new_input.controller.mouse_buttons[1], GetKeyState(VK_RBUTTON) & (1 << 15));
+        win32_process_digital_button(&new_input.controller.mouse_buttons[2], GetKeyState(VK_MBUTTON) & (1 << 15));
+        //TODO(fran): VK_XBUTTON1 VK_XBUTTON2
 
         //if (GetAsyncKeyState('W') & 0x8000) sound_out.hz = 520;
         //else if (GetAsyncKeyState('S') & 0x8000) sound_out.hz = 128;
         //else sound_out.hz = 256;
 
         //Tick(&gs);
-        
-        DWORD byte_to_lock=0, target_cursor=0, bytes_to_write=0;
-        if (sound_is_valid) {
-            sound_is_valid = true;
-            byte_to_lock = (sound_out.runningsampleindex * sound_out.bytes_per_sample) % sound_out.secondary_buf_sz;
-            target_cursor = (last_play_cursor + sound_out.latency_sample_count * sound_out.bytes_per_sample) % sound_out.secondary_buf_sz; //I'm pretty sure this is wrong, it looks to me like you're overriding the play cursor
-            bytes_to_write=0;
+
+
+
+        game_framebuffer game_frame_buf; //INFO: Construís el objeto genérico a partir del tuyo específico
+        game_frame_buf.bytes = frame_backbuffer.bytes;
+        game_frame_buf.bytes_per_pixel = frame_backbuffer.bytes_per_pixel;
+        game_frame_buf.height = frame_backbuffer.height;
+        game_frame_buf.width = frame_backbuffer.width;
+        game_frame_buf.pitch = frame_backbuffer.pitch;
+
+        game_update_and_render(&game_mem, &game_frame_buf, &new_input);
+
+        LARGE_INTEGER audio_wall_clock; QueryPerformanceCounter(&audio_wall_clock);
+        f32 from_begin_to_audio_sec = (f32)(flip_wall_clock.QuadPart - audio_wall_clock.QuadPart) / (f32)pc_freq.QuadPart;
+
+        if (DWORD play_cur, write_cur; secondary_buf->GetCurrentPosition(&play_cur, &write_cur) == DS_OK) { //TODO(fran): revise Handmade Hero day 20 from 1:17:10 to 2:22:40 to make sure I didnt introduce some bug in the audio code
+            /*
+            How the sound output works:
+            -We define a safety value that is the number of samples we think our game update loop may vary by (eg 2ms)
+            -When we go write the audio, we check the play cursor position and forecast where we think it will be the on the next frame boundary
+            -Then we check if the write cursor is before that by at least the safety value. If it is then we write from the write cursor up to the next frame boundary, and then one more frame, this gives perfect audio sync for a card with low enough latency
+            -If the write cursor is after the safety margin, then we assume we can never sync the audio perfectly, so we write one frame's worth of audio plus a number of guard samples
+            */
+
+            if (!sound_is_valid) {
+                sound_out.runningsampleindex = write_cur / sound_out.bytes_per_sample;
+                sound_is_valid = true;
+            }
+
+            DWORD byte_to_lock = (sound_out.runningsampleindex * sound_out.bytes_per_sample) % sound_out.secondary_buf_sz;
+
+            DWORD expected_sound_bytes_per_frame = (sound_out.samples_per_sec * sound_out.bytes_per_sample) / game_update_hz;
+            DWORD expected_bytes_until_flip = (DWORD)( ((target_sec_per_frame-from_begin_to_audio_sec)/ target_sec_per_frame) * (f32)expected_sound_bytes_per_frame); //TODO(fran): Casey forgot to use this
+            DWORD expected_frame_boundary_byte = play_cur + expected_bytes_until_flip;
+            DWORD safe_write_cur = write_cur;
+            if (safe_write_cur < play_cur)
+                safe_write_cur += sound_out.secondary_buf_sz;
+
+            assert(safe_write_cur >= play_cur);
+            sound_out.safety_bytes = (DWORD)(((f32)(sound_out.samples_per_sec * sound_out.bytes_per_sample) / (f32)game_update_hz) / 2.f); //TODO(fran): calculate this variance for real to find a reasonable value
+            safe_write_cur += sound_out.safety_bytes;
+            bool audio_card_is_low_latency = safe_write_cur < expected_frame_boundary_byte;
+
+            DWORD target_cursor = 0;
+            if (audio_card_is_low_latency)
+                target_cursor = (expected_frame_boundary_byte + expected_sound_bytes_per_frame) % sound_out.secondary_buf_sz;
+            else
+                target_cursor = (write_cur + expected_sound_bytes_per_frame + sound_out.safety_bytes) % sound_out.secondary_buf_sz; //I'm pretty sure this is wrong, it looks to me like you're overriding the play cursor
+
+            DWORD bytes_to_write = 0;
             //if (byte_to_lock == target_cursor) {
             //    bytes_to_write = 0;
             //}
@@ -566,37 +639,39 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             else {
                 bytes_to_write = target_cursor - byte_to_lock;
             }
+
+            game_soundbuffer game_sound_buf;
+            game_sound_buf.samples = samples;
+            game_sound_buf.samples_per_sec = sound_out.samples_per_sec;
+            game_sound_buf.sample_count_to_output = bytes_to_write / sound_out.bytes_per_sample;
+            game_get_sound_samples(&game_mem, &game_sound_buf);
+
+#if _DEBUG
+            {
+                DWORD p_cur, w_cur;
+                secondary_buf->GetCurrentPosition(&p_cur, &w_cur);
+                DWORD unwrapped_write_cursor = w_cur;
+                if (unwrapped_write_cursor < p_cur) //Remember that we have a circular buffer, TODO(fran): wont this will be wrong if the write cursor happened to lag behind the play cursor? can this happen?
+                    unwrapped_write_cursor += sound_out.secondary_buf_sz;
+                audio_latency_bytes = unwrapped_write_cursor - p_cur;
+                audio_latency_sec = ((f32)audio_latency_bytes / (f32)sound_out.bytes_per_sample) / (f32)sound_out.samples_per_sec;
+                //printf("audio latency: %f sec\n", audio_latency_sec);
+            }
+
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].output_play = play_cur;
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].output_write = write_cur;
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].output_location= byte_to_lock;
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].output_byte_count = bytes_to_write;
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].expected_flip_play = expected_frame_boundary_byte;
+
+#endif
+            win32_fill_sound_buffer(&sound_out, byte_to_lock, bytes_to_write, &game_sound_buf);
+        }
+        else {
+            sound_is_valid = false;
         }
 
-        game_framebuffer game_frame_buf; //INFO: Construís el objeto genérico a partir del tuyo específico
-        game_frame_buf.bytes = frame_backbuffer.bytes;
-        game_frame_buf.bytes_per_pixel = frame_backbuffer.bytes_per_pixel;
-        game_frame_buf.height = frame_backbuffer.height;
-        game_frame_buf.width = frame_backbuffer.width;
-
-        game_soundbuffer game_sound_buf;
-        game_sound_buf.samples = samples;
-        game_sound_buf.samples_per_sec = sound_out.samples_per_sec;
-        game_sound_buf.sample_count_to_output = bytes_to_write/sound_out.bytes_per_sample; //TODO(fran): por ahora siempre pedimos 1/30 de segundo de audio cada vez
-
-        game_update_and_render(&game_mem, &game_frame_buf,&game_sound_buf,&new_input);
-
-        //FillSoundBuffer(&sound_out, bytetolock, bytes_to_write);
-        if (sound_is_valid) {
-            
-            DWORD play_cur, write_cur; 
-            secondary_buf->GetCurrentPosition(&play_cur, &write_cur);
-            DWORD unwrapped_write_cursor = write_cur;
-            if (unwrapped_write_cursor < play_cur) //Remember that we have a circular buffer, TODO(fran): wont this will be wrong if the write cursor happened to lag behind the play cursor? can this happen?
-                unwrapped_write_cursor += sound_out.secondary_buf_sz;
-            audio_latency_bytes = unwrapped_write_cursor - play_cur;
-            audio_latency_sec = ((f32)audio_latency_bytes / (f32)sound_out.bytes_per_sample) / (f32)sound_out.samples_per_sec;
-            printf("audio latency: %f sec\n", audio_latency_sec);
-            
-            FillSoundBuffer(&sound_out, byte_to_lock, bytes_to_write,&game_sound_buf);
-
-        }
-
+        //TODO(fran): this may need to be a swap
         old_input = new_input;//TODO(fran): put this somewhere nice
 
         //IDEA: que el programa de tipeo tenga modo para aprender a tipear teclas tipicas en programación: {} () & % etc
@@ -606,66 +681,85 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         QueryPerformanceCounter(&end_counter);
         f32 dt_per_sec = (f32)(end_counter.QuadPart - last_counter.QuadPart) / (f32)pc_freq.QuadPart;
         {
-            int game_update_hz = monitor_refresh_hz / 2;
-            f32 target_sec_per_frame = 1.f/game_update_hz;
             if (dt_per_sec < target_sec_per_frame) {
                 UINT desired_scheduler_ms = 1;
                 bool granular_sleep = timeBeginPeriod(desired_scheduler_ms) == TIMERR_NOERROR;//TODO(fran): spinlocking doesnt look so bad now
                 while (dt_per_sec < target_sec_per_frame) {
-                    if(granular_sleep)
+                    if (granular_sleep)
                         Sleep((DWORD)((target_sec_per_frame - dt_per_sec) * 1000.f));
                     //std::this_thread::sleep_for(std::chrono::microseconds((u64)((target_sec_per_frame - dt_per_sec) * 1000000.f)));
                     QueryPerformanceCounter(&end_counter);
                     dt_per_sec = (f32)(end_counter.QuadPart - last_counter.QuadPart) / (f32)pc_freq.QuadPart;
                 }
                 timeEndPeriod(desired_scheduler_ms);
-            } else { /*TODO(fran): LOG missed a frame*/ }
+            }
+            else { /*TODO(fran): LOG missed a frame*/ }
             //printf("game update hz: %d\ntarget sec per frame: %f\ndt per sec: %f\n", game_update_hz, target_sec_per_frame,dt_per_sec);
         }
         //QueryPerformanceCounter(&end_counter);
         //dt_per_sec = (f32)(end_counter.QuadPart - last_counter.QuadPart) / (f32)pc_freq.QuadPart;
-        printf("%f ms ; fps %f\n", dt_per_sec * 1000.f,1.f/dt_per_sec); //ms
+        //printf("%f ms ; fps %f\n", dt_per_sec * 1000.f, 1.f / dt_per_sec); //ms
         last_counter = end_counter;
 
 #if _DEBUG
-        [&](){
-            int top = 0;
-            int bottom = frame_backbuffer.height;
+        auto win32_DEBUG_draw_sound_marker = [](win32_framebuffer* fb, f32 c, int padx, int top, int bottom, DWORD value, u32 color) {
+            int x = padx + (int)(c * (f32)value);
+            win32_DEBUG_draw_vertical(fb, x, top, bottom, color);
+        };
 
-            int pad_x = 16;
-            f32 c = (f32)(frame_backbuffer.width-2*pad_x) / (f32)sound_out.secondary_buf_sz;
-            for (int i = 0; i < DEBUG_last_play_cur_index; i++) {
-                i32 x = (i32) (pad_x + c * (f32)DEBUG_last_play_cur[i].play);
-                win32_DEBUG_draw_vertical(&frame_backbuffer, x, top, bottom,0xFFFFFFFF);
-                x = (i32) (pad_x + c * (f32)DEBUG_last_play_cur[i].write);
-                win32_DEBUG_draw_vertical(&frame_backbuffer, x, top, bottom, 0x00FF0000);
+        [&]() {
+            int pad_x = 16, pad_y = 16;
+            int line_height = (int)(frame_backbuffer.height * .1f);
+
+            f32 c = (f32)(frame_backbuffer.width - 2 * pad_x) / (f32)sound_out.secondary_buf_sz;
+            for (int i = 0; i < ARRAYSIZE(DEBUG_last_play_cur); i++) {
+                int top = pad_y;
+                int bottom = pad_y + line_height;
+                u32 play_color = 0xFFFFFFFF, write_color = 0x00FF0000, expected_flip_play_color = 0x00FFFF00;
+                if (i == (DEBUG_last_play_cur_index - 1)) {//TODO(fran): this needs to wrap in case it was 0
+                    top += pad_y + line_height;
+                    bottom += pad_y + line_height;
+                    int first_top = top;
+                    win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, top, bottom, DEBUG_last_play_cur[i].output_play, play_color);
+                    win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, top, bottom, DEBUG_last_play_cur[i].output_write, write_color);
+                    top += pad_y + line_height;
+                    bottom += pad_y + line_height;
+                    win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, top, bottom, DEBUG_last_play_cur[i].output_location, play_color);
+                    win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, top, bottom, DEBUG_last_play_cur[i].output_location + DEBUG_last_play_cur[i].output_byte_count, write_color);
+                    top += pad_y + line_height;
+                    bottom += pad_y + line_height;
+                    win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, first_top, bottom, DEBUG_last_play_cur[i].expected_flip_play, expected_flip_play_color);
+                }
+
+                win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, top, bottom, DEBUG_last_play_cur[i].flip_play, play_color);
+                win32_DEBUG_draw_sound_marker(&frame_backbuffer, c, pad_x, top, bottom, DEBUG_last_play_cur[i].flip_write, write_color);
             }
-        }();
+        };//();
 #endif
 
         //INFO IMPORTANT: Casey said we should wait first and then display the frame, and the time to display counts for the next frame's time. Pretty nice and it makes sense
         RECT r; GetClientRect(hwnd, &r); //TODO(fran): we render the whole screen, not just what rcpaint wants
         HDC dc = GetDC(hwnd);
-        win32_render_to_screen(dc, r,&frame_backbuffer);
-        ReleaseDC(hwnd,dc);
+        win32_render_to_screen(dc, r, &frame_backbuffer);
+        ReleaseDC(hwnd, dc);
 
+        QueryPerformanceCounter(&flip_wall_clock);
 
-        if (DWORD play, write; secondary_buf->GetCurrentPosition(&play, &write) == DS_OK) {
-            last_play_cursor = play;
-            last_write_cursor = write;
-            if (!sound_is_valid) {
-                sound_out.runningsampleindex = write / sound_out.bytes_per_sample;
-                sound_is_valid = true;
-            }
 #if _DEBUG
-            DEBUG_last_play_cur[DEBUG_last_play_cur_index++] = { play,write };
+        {
+            DWORD p_cur, w_cur;
+            secondary_buf->GetCurrentPosition(&p_cur, &w_cur);
+
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].flip_play = p_cur;
+            DEBUG_last_play_cur[DEBUG_last_play_cur_index].flip_write = w_cur;
+
+            DEBUG_last_play_cur_index++;
             if (DEBUG_last_play_cur_index >= ARRAYSIZE(DEBUG_last_play_cur)) DEBUG_last_play_cur_index = 0;
-#endif
+
         }
-        else sound_is_valid = false;
-
+#endif
     }
-
+    //TODO(fran): debug output tells me that somewhere we are lacking a call to CoInitialize
     return (int) msg.wParam;
 }
 
