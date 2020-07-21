@@ -62,38 +62,12 @@ i32 round_f32_to_i32(f32 n) {
     return res;
 }
 
-void game_render_rectangle(game_framebuffer* buf, v2_f32 minf, v2_f32 maxf, argb_f32 colorf) {
-    //The Rectangles are filled NOT including the final row/column
-    v2_i32 min = { round_f32_to_i32(minf.x), round_f32_to_i32(minf.y) };
-    v2_i32 max = { round_f32_to_i32(maxf.x), round_f32_to_i32(maxf.y) };
-
-    if (min.x < 0)min.x = 0;
-    if (min.y < 0)min.y = 0;
-    if (max.x > buf->width)max.x = buf->width;
-    if (max.y > buf->height)max.y = buf->height;
-
-    u32 col = (round_f32_to_i32(colorf.a*255.f) <<24) |
-              (round_f32_to_i32(colorf.r * 255.f) <<16) |
-              (round_f32_to_i32(colorf.g * 255.f) << 8) |
-              round_f32_to_i32(colorf.b * 255.f);
-
-    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
-    for (int y = min.y; y < max.y; y++) {
-        u32* pixel = (u32*)row;
-        for (int x = min.x; x < max.x; x++) {
-            //AARRGGBB
-            *pixel++ = col;
-        }
-        row += buf->pitch;//he does this instead of just incrementing each time in the x loop because of alignment things I dont care about now
-    }
-}
-
 bool game_check_collision_point_to_rc(v2_f32 p, rc r) {
     return p.x > (r.pos.x-r.radius.x)&& p.x < (r.pos.x + r.radius.x) && p.y >(r.pos.y - r.radius.y) && p.y < (r.pos.y + r.radius.y);
 }
 
-png DEBUG_load_png(const char* filename) {
-    png res{0};
+img DEBUG_load_png(const char* filename) {
+    img res{0};
     auto [img_mem, img_sz] = platform_read_entire_file(filename);
     if (img_mem) {
         //platform_write_entire_file("C:/Users/Brenda-Vero-Frank/Desktop/testfile.txt",background_bmp_mem,background_bmp_sz);
@@ -117,42 +91,109 @@ png DEBUG_load_png(const char* filename) {
                 }
                 img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
             }
-
+            //TODO(fran): get align x and y
 
         }
     }
     return res;
 }
 
-void DEBUG_unload_png(png* img) {
-    stbi_image_free(img->mem);
+void DEBUG_unload_png(img* image) {
+    stbi_image_free(image->mem);
     //TODO(fran): zero the other members?
 }
 
-void game_render_img(game_framebuffer* buf, v2_f32 pos, png* img) {
+void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
 
     v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
-    v2_i32 max = { round_f32_to_i32(pos.x+img->width), round_f32_to_i32(pos.y+img->height) };
+    v2_i32 max = { round_f32_to_i32(pos.x+ image->width), round_f32_to_i32(pos.y+ image->height) };
+
+    int offset_x=0;
+    int offset_y=0;
+
+    if (min.x < 0) { offset_x = -min.x ;  min.x = 0; }
+    if (min.y < 0) { offset_y = -min.y; min.y = 0; }
+    if (max.x > buf->width)max.x = buf->width;
+    if (max.y > buf->height)max.y = buf->height;
+
+    int img_pitch = image->width * image->channels * image->bytes_per_channel;
+
+    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
+    u8* img_row = (u8*)image->mem + offset_x* image->channels* image->bytes_per_channel + offset_y*img_pitch ;
+    
+    for (int y = min.y; y < max.y; y++) {
+        u32* pixel = (u32*)row;
+        u32* img_pixel = (u32*)img_row;
+        for (int x = min.x; x < max.x; x++) {
+            //AARRGGBB
+
+            //very slow linear blend
+            f32 s_a = (f32)((*img_pixel >> 24) & 0xFF) / 255.f; //source
+            f32 s_r = (f32)((*img_pixel >> 16) & 0xFF);
+            f32 s_g = (f32)((*img_pixel >> 8) & 0xFF);
+            f32 s_b = (f32)((*img_pixel >> 0) & 0xFF);
+
+            f32 d_r = (f32)((*pixel >> 16) & 0xFF); //dest
+            f32 d_g = (f32)((*pixel >> 8) & 0xFF);
+            f32 d_b = (f32)((*pixel >> 0) & 0xFF);
+
+            f32 r = (1.f - s_a) * d_r + s_a * s_r; //TODO(fran): what if the dest had an alpha different from 255?
+            f32 g = (1.f - s_a) * d_g + s_a * s_g;
+            f32 b = (1.f - s_a) * d_b + s_a * s_b;
+
+            *pixel = 0xFF<<24 | round_f32_to_i32(r)<<16 | round_f32_to_i32(g)<<8 | round_f32_to_i32(b)<<0;
+
+            pixel++;
+            img_pixel++;
+        }
+        row += buf->pitch;
+        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+    }
+
+}
+
+struct min_max_v2_f32 { v2_f32 min, max; }; //NOTE: game_coords means meters
+min_max_v2_f32 transform_to_screen_coords(rc game_coords, f32 meters_to_pixels, v2_f32 camera_pixels, v2_f32 lower_left_pixels) {
+    v2_f32 min_pixels = { (game_coords.pos.x - game_coords.radius.x) * meters_to_pixels, (game_coords.pos.y + game_coords.radius.y) * meters_to_pixels };
+
+    v2_f32 min_pixels_camera = min_pixels - camera_pixels;
+
+    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
+    v2_f32 min_pixels_camera_screen = { lower_left_pixels.x + min_pixels_camera.x , lower_left_pixels.y - min_pixels_camera.y };
+
+    v2_f32 max_pixels = { (game_coords.pos.x + game_coords.radius.x) * meters_to_pixels, (game_coords.pos.y - game_coords.radius.y) * meters_to_pixels };
+
+    v2_f32 max_pixels_camera = max_pixels - camera_pixels;
+
+    v2_f32 max_pixels_camera_screen = { lower_left_pixels.x + max_pixels_camera.x , lower_left_pixels.y - max_pixels_camera.y };
+
+    return { min_pixels_camera_screen , max_pixels_camera_screen };
+}
+
+void game_render_rectangle(game_framebuffer* buf, min_max_v2_f32 min_max, argb_f32 colorf) {
+    //The Rectangles are filled NOT including the final row/column
+    v2_i32 min = { round_f32_to_i32(min_max.min.x), round_f32_to_i32(min_max.min.y) };
+    v2_i32 max = { round_f32_to_i32(min_max.max.x), round_f32_to_i32(min_max.max.y) };
 
     if (min.x < 0)min.x = 0;
     if (min.y < 0)min.y = 0;
     if (max.x > buf->width)max.x = buf->width;
     if (max.y > buf->height)max.y = buf->height;
 
+    u32 col = (round_f32_to_i32(colorf.a * 255.f) << 24) |
+        (round_f32_to_i32(colorf.r * 255.f) << 16) |
+        (round_f32_to_i32(colorf.g * 255.f) << 8) |
+        round_f32_to_i32(colorf.b * 255.f);
+
     u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
-    u8* img_row = (u8*)img->mem;
-    int img_pitch = img->width * img->channels * img->bytes_per_channel;
     for (int y = min.y; y < max.y; y++) {
         u32* pixel = (u32*)row;
-        u32* img_pixel = (u32*)img_row;
         for (int x = min.x; x < max.x; x++) {
             //AARRGGBB
-            *pixel++ = *img_pixel++;
+            *pixel++ = col;
         }
-        row += buf->pitch;
-        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+        row += buf->pitch;//he does this instead of just incrementing each time in the x loop because of alignment things I dont care about now
     }
-
 }
 
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
@@ -205,7 +246,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_st->world.stages[0].lvls[1].wall_count = 1;
         game_st->world.stages[0].lvls[1].word_count = 1;
 
-        game_st->world.stages[0].lvls[0].walls[0].rect.pos = { 10.5f * game_st->word_height_meters, 9.5f * game_st->word_height_meters }; //TODO(fran): allocate space for all these
+        game_st->world.stages[0].lvls[0].walls[0].rect.pos = { 14.5f * game_st->word_height_meters, 9.5f * game_st->word_height_meters }; //TODO(fran): allocate space for all these
         game_st->world.stages[0].lvls[0].walls[0].rect.radius = { .5f * game_st->word_height_meters , 4.5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[0].walls[0].color = { 0.f,1.f,0.f,0.f };
 
@@ -221,7 +262,12 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_st->world.stages[0].lvls[1].words[0].rect.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].words[0].color = { 0.f,0.f,1.f,1.f };
 
-        game_st->DEBUG_background = DEBUG_load_png("assets/img/dark_night_sky.png"); //TODO(fran): release mem DEBUG_unload_png(&background);
+        game_st->DEBUG_background = DEBUG_load_png("assets/img/dark_night_sky.png"); //TODO(fran): release mem DEBUG_unload_png();
+        //game_st->DEBUG_background.align = { 20,20 };
+        game_st->DEBUG_menu = DEBUG_load_png("assets/img/down.png"); //TODO(fran): release mem DEBUG_unload_png();
+        //game_st->DEBUG_menu.align = { 20,20 };
+
+        game_st->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
 
         memory->is_initialized = true; //TODO(fran): should the platform layer do this?
     }
@@ -275,31 +321,35 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             !game_check_collision_point_to_rc(new_word_pos11, current_level->walls[0].rect)) { //TODO(fran): add collision checks for the mid points, if two objs are the same width for example then when they line up perfectly one can enter the other from the top or bottom. Or just move on to a new technique
             //TODO(fran): fix faster diagonal movement once we properly use vectors
 
-           current_level->words[0].rect.pos.x += d_word.x;//TODO(fran): more operator overloading
-           current_level->words[0].rect.pos.y += d_word.y;
+           current_level->words[0].rect.pos += d_word;//TODO(fran): more operator overloading
 
+           v2_f32 screen_offset = { (f32)frame_buf->width/2,(f32)frame_buf->height/2 };
+
+           game_st->camera = current_level->words[0].rect.pos *game_st->word_meters_to_pixels - screen_offset;
         }
     }
 
-    game_render_rectangle(frame_buf, { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height }, { 0,.5f,0.f,.5f });
+    game_render_rectangle(frame_buf, { { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height } }, { 0,.5f,0.f,.5f });
     //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
 
-    game_render_img(frame_buf, { -100,10 }, &game_st->DEBUG_background); //TODO(fran): correct clipping when leaving the screen from the left or top
-    game_render_img(frame_buf, { 1500,300 }, &game_st->DEBUG_background);
-    game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); //TODO(fran): correct clipping when leaving the screen from the left or top
-    game_render_img(frame_buf, { 500,800 }, &game_st->DEBUG_background); //TODO(fran): correct clipping when leaving the screen from the left or top
+    //game_render_img(frame_buf, { -100,10 }, &game_st->DEBUG_background); 
+    //game_render_img(frame_buf, { 1500,300 }, &game_st->DEBUG_background);
+    //game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); 
+    game_render_img(frame_buf, { 500,800 }, &game_st->DEBUG_background); 
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
+    game_render_img(frame_buf, { 500,500 }, &game_st->DEBUG_menu); //TODO(fran): fix transparency, NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
 
-    v2_f32 wall_min = { game_st->lower_left_pixels.x + (current_level->walls[0].rect.pos.x - current_level->walls[0].rect.radius.x) * game_st->word_meters_to_pixels, game_st->lower_left_pixels.y - (current_level->walls[0].rect.pos.y + current_level->walls[0].rect.radius.y) * game_st->word_meters_to_pixels };
-    v2_f32 wall_max = { game_st->lower_left_pixels.x + (current_level->walls[0].rect.pos.x + current_level->walls[0].rect.radius.x) * game_st->word_meters_to_pixels, game_st->lower_left_pixels.y - (current_level->walls[0].rect.pos.y - current_level->walls[0].rect.radius.y) * game_st->word_meters_to_pixels };
+    game_render_rectangle(
+        frame_buf, 
+        transform_to_screen_coords(current_level->walls[0].rect, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels), 
+        current_level->walls[0].color);
 
-    game_render_rectangle(frame_buf, wall_min, wall_max, current_level->walls[0].color);
-
-    v2_f32 word_min = { game_st->lower_left_pixels.x + (current_level->words[0].rect.pos.x - current_level->words[0].rect.radius.x)* game_st->word_meters_to_pixels, game_st->lower_left_pixels.y - (current_level->words[0].rect.pos.y + current_level->words[0].rect.radius.y)* game_st->word_meters_to_pixels };
-    v2_f32 word_max = { game_st->lower_left_pixels.x + (current_level->words[0].rect.pos.x + current_level->words[0].rect.radius.x)* game_st->word_meters_to_pixels, game_st->lower_left_pixels.y - (current_level->words[0].rect.pos.y - current_level->words[0].rect.radius.y) * game_st->word_meters_to_pixels };
-    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-
-    game_render_rectangle(frame_buf, word_min, word_max, current_level->words[0].color);
+    game_render_rectangle(
+        frame_buf,
+        transform_to_screen_coords(current_level->words[0].rect, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels),
+        current_level->words[0].color);
 }
+
+//TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting

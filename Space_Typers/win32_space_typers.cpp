@@ -694,7 +694,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 timeEndPeriod(desired_scheduler_ms);
             }
             else { /*TODO(fran): LOG missed a frame*/ }
-            //printf("game update hz: %d\ntarget sec per frame: %f\ndt per sec: %f\n", game_update_hz, target_sec_per_frame,dt_per_sec);
+            printf("game update hz: %d\ntarget sec per frame: %f\ndt per sec: %f\nfps: %f\n", game_update_hz, target_sec_per_frame,dt_per_sec,1/dt_per_sec);
         }
         //QueryPerformanceCounter(&end_counter);
         //dt_per_sec = (f32)(end_counter.QuadPart - last_counter.QuadPart) / (f32)pc_freq.QuadPart;

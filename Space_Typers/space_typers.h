@@ -66,12 +66,31 @@ struct v3_i32 {
 
 struct v2_f32 {
     f32 x, y;
+
+    v2_f32& operator+=(const v2_f32& rhs) {
+        this->x += rhs.x;
+        this->y += rhs.y;
+        return *this;
+    }
+
+    v2_f32& operator-=(const v2_f32& rhs) {
+        this->x -= rhs.x;
+        this->y -= rhs.y;
+        return *this;
+    }
 };
 
 v2_f32 operator*(v2_f32 v, f32 scalar) {
     v2_f32 res;
     res.x = v.x * scalar;
     res.y = v.y * scalar;
+    return res;
+}
+
+v2_f32 operator-(v2_f32 v1, v2_f32 v2) {
+    v2_f32 res;
+    res.x = v1.x - v2.x;
+    res.y = v1.y - v2.y;
     return res;
 }
 
@@ -99,8 +118,9 @@ struct game_controller_input {//TODO(fran): this struct probably needs rearrangi
     };
 };
 
-struct png {
+struct img {
     int width, height, channels, bytes_per_channel;
+    //v2_i32 align; //TODO(fran): add align offset to change the position of the bitmap relative to a point (Handmade hero day 39)
     void* mem;
 };
 
@@ -197,8 +217,10 @@ struct game_state {
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena memory_arena;
 
-    png DEBUG_background;
+    img DEBUG_background;
+    img DEBUG_menu;
 
+    v2_f32 camera;
 };
 
 struct game_memory { //We are gonna be taking the handmade hero route, to see how it goes and if it is something that I like when the thing gets complex
