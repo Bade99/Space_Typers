@@ -295,26 +295,34 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     game_level_map* current_level = &game_st->world.stages[0].lvls[game_st->world.stages[0].current_lvl];
 
-    v2_f32 d_word = { 0,0 };
-    f32 velocity = 5.f * game_st->word_height_meters * input->dt_sec;
+    v2_f32 dd_word = { 0,0 }; //accel
     if (input->controller.right.ended_down) {
-        d_word.x = +velocity;
+        dd_word.x = 1.f;
     }
     if (input->controller.left.ended_down) {
-        d_word.x = -velocity ;
+        dd_word.x = -1.f;
     }
     if (input->controller.up.ended_down) {
-        d_word.y = +velocity;
+        dd_word.y = +1.f;
     }
     if (input->controller.down.ended_down) {
-        d_word.y = -velocity;
+        dd_word.y = -1.f;
     }
+    if (dd_word.x && dd_word.y) {//manual correction for diagonal movement
+        dd_word *= sqrtf(.5f);
+    }
+    f32 constant_accel = 10.f*game_st->word_height_meters; //m/s^2
+    dd_word *= constant_accel;
+    //TODO(fran): ordinary differential eqs
+    dd_word += -current_level->words[0].velocity; //basic "drag" //TODO(fran): understand why this doesnt completely eat the acceleration value
     {
-        v2_f32 new_pos = { current_level->words[0].rect.pos.x + d_word.x,current_level->words[0].rect.pos.y + d_word.y };
+        v2_f32 new_pos = .5f*dd_word*powf(input->dt_sec,2.f) + current_level->words[0].velocity * input->dt_sec + current_level->words[0].rect.pos;
         v2_f32 new_word_pos00{ new_pos.x - current_level->words[0].rect.radius.x,new_pos.y - current_level->words[0].rect.radius.y};
         v2_f32 new_word_pos01{ new_pos.x + current_level->words[0].rect.radius.x,new_pos.y - current_level->words[0].rect.radius.y};
         v2_f32 new_word_pos10{ new_pos.x - current_level->words[0].rect.radius.x,new_pos.y + current_level->words[0].rect.radius.y};
         v2_f32 new_word_pos11{ new_pos.x + current_level->words[0].rect.radius.x,new_pos.y + current_level->words[0].rect.radius.y}; //TODO(fran): rc to rc collision
+
+        current_level->words[0].velocity += dd_word * input->dt_sec;
 
         if (!game_check_collision_point_to_rc(new_word_pos00, current_level->walls[0].rect) &&
             !game_check_collision_point_to_rc(new_word_pos01, current_level->walls[0].rect)&&
@@ -322,7 +330,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             !game_check_collision_point_to_rc(new_word_pos11, current_level->walls[0].rect)) { //TODO(fran): add collision checks for the mid points, if two objs are the same width for example then when they line up perfectly one can enter the other from the top or bottom. Or just move on to a new technique
             //TODO(fran): fix faster diagonal movement once we properly use vectors
 
-           current_level->words[0].rect.pos += d_word;//TODO(fran): more operator overloading
+           current_level->words[0].rect.pos = new_pos;//TODO(fran): more operator overloading
 
            v2_f32 screen_offset = { (f32)frame_buf->width/2,(f32)frame_buf->height/2 };
 

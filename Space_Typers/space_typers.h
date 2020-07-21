@@ -9,7 +9,7 @@
 
 #include "space_typers_img.h" //TODO(fran): create separate .h for game specific things
 
-#if _DEBUG
+#if _DEBUG //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
 #define game_assert(expression) if(!(expression)){*(int*)0=0;}
 #else
 #define game_assert(expression) 
@@ -36,6 +36,8 @@ typedef wchar_t utf16;
 
 struct argb_f32 { f32 a, r, g, b; };
 
+#include "space_typers_vectors.h"
+
 struct game_framebuffer {
     void* bytes{ 0 };
     i32 width;
@@ -56,44 +58,6 @@ struct game_button_state {
     bool ended_down;
 };
 
-struct v2_i32 {
-    i32 x, y;
-};
-
-struct v3_i32 {
-    i32 x, y, z;
-};
-
-struct v2_f32 {
-    f32 x, y;
-
-    v2_f32& operator+=(const v2_f32& rhs) {
-        this->x += rhs.x;
-        this->y += rhs.y;
-        return *this;
-    }
-
-    v2_f32& operator-=(const v2_f32& rhs) {
-        this->x -= rhs.x;
-        this->y -= rhs.y;
-        return *this;
-    }
-};
-
-v2_f32 operator*(v2_f32 v, f32 scalar) {
-    v2_f32 res;
-    res.x = v.x * scalar;
-    res.y = v.y * scalar;
-    return res;
-}
-
-v2_f32 operator-(v2_f32 v1, v2_f32 v2) {
-    v2_f32 res;
-    res.x = v1.x - v2.x;
-    res.y = v1.y - v2.y;
-    return res;
-}
-
 struct game_controller_input {//TODO(fran): this struct probably needs rearranging for better packing
     utf16 new_char; //probably not good to use utf16 with the surrogate pair situation, utf32 might be better for just getting one clean character no matter what
 
@@ -102,10 +66,8 @@ struct game_controller_input {//TODO(fran): this struct probably needs rearrangi
 
     game_button_state back; //TODO(fran): I think that for the type of game I want to make no key needs to be persistent as I do it now, they just need a boolean is_on_repeat that persists
 
-    union {
+    union { //TODO(fran): check LLVM supports nameless struct/union
         game_button_state persistent_buttons[5]; //REMEMBER: actualizar el tamaño del array si agrego botones
-#pragma warning(push) //TODO(fran): simpler is to just use compiler flags, also Im not sure every compiler accepts #pragma
-#pragma warning(disable : 4201)
         struct {
             game_button_state up;
             game_button_state down;
@@ -114,7 +76,6 @@ struct game_controller_input {//TODO(fran): this struct probably needs rearrangi
             game_button_state enter;
             //game_button_state escape;
         };
-#pragma warning( pop )
     };
 };
 
@@ -129,11 +90,11 @@ struct game_input {
     f32 dt_sec;
 };
 
-struct Word {
-    v2_f32 pos;
-    v2_f32 speed;
-    utf16 txt[25];
-};
+//struct Word {
+//    v2_f32 pos;
+//    //v2_f32 speed;
+//    utf16 txt[25];
+//};
 
 //struct game_world {
 //    int width, height;
@@ -147,6 +108,7 @@ struct rc {
 struct colored_rc {
     rc rect;
     argb_f32 color;
+    v2_f32 velocity;
 };
 
 
@@ -243,6 +205,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
 //INFO IMPORTANT: This are the Services that the Platform Layer provides to the Game
 //TODO(fran): this is just debug code, doesnt handle many problems
-std::pair<void*,u32> platform_read_entire_file(const char* filename);
+std::pair<void*,u32> platform_read_entire_file(const char* filename); //TODO(fran): probably simpler is to create a struct with the two members instead of using pair
 bool platform_write_entire_file(const char* filename, void* memory, u32 mem_sz);
 void platform_free_file_memory(void* memory);

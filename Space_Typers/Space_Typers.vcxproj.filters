@@ -27,6 +27,9 @@
     <ClInclude Include="space_typers_img.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="space_typers_vectors.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Space_Typers.rc">
