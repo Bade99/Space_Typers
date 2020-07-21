@@ -266,6 +266,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         //game_st->DEBUG_background.align = { 20,20 };
         game_st->DEBUG_menu = DEBUG_load_png("assets/img/down.png"); //TODO(fran): release mem DEBUG_unload_png();
         //game_st->DEBUG_menu.align = { 20,20 };
+        game_st->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
 
         game_st->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
 
@@ -337,7 +338,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); 
     game_render_img(frame_buf, { 500,800 }, &game_st->DEBUG_background); 
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
-    game_render_img(frame_buf, { 500,500 }, &game_st->DEBUG_menu); //TODO(fran): fix transparency, NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
+    game_render_img(frame_buf, { 500,500 }, &game_st->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
 
@@ -350,6 +351,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         frame_buf,
         transform_to_screen_coords(current_level->words[0].rect, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels),
         current_level->words[0].color);
+
+    game_render_img(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &game_st->DEBUG_mouse);
 }
 
 //TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting

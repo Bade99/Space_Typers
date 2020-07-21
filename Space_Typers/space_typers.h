@@ -219,6 +219,7 @@ struct game_state {
 
     img DEBUG_background;
     img DEBUG_menu;
+    img DEBUG_mouse;
 
     v2_f32 camera;
 };

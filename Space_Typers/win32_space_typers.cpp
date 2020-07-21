@@ -370,6 +370,12 @@ u32 win32_get_refresh_rate_hz(HWND wnd) {
 #include <timeapi.h> //timeBeginPeriod timeEndPeriod
 #pragma comment(lib,"Winmm.lib") //timeBeginPeriod timeEndPeriod
 
+struct win32_state {
+    WINDOWPLACEMENT previous_window_placement;
+
+};
+win32_state win32_global_state;
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
@@ -412,6 +418,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     ShowWindow(hwnd, nCmdShow);//TODO(fran): remove
     UpdateWindow(hwnd);
+
+    win32_global_state.previous_window_placement = { sizeof(win32_global_state.previous_window_placement) };
 
 //#ifdef _DEBUG
     AllocConsole();
@@ -812,11 +820,60 @@ inline double GetCounter(__int64 CounterStart, double PCFreq)
 //    return 0;
 //}
 
+void win32_switch_fullscreen(HWND hwnd, WINDOWPLACEMENT* g_wpPrev)
+{//https://devblogs.microsoft.com/oldnewthing/20100412-00/?p=14353 thanks to the one and only Raymond Chen
+    DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+    if (dwStyle & WS_OVERLAPPEDWINDOW) {
+        MONITORINFO mi = { sizeof(mi) };
+        if (GetWindowPlacement(hwnd, g_wpPrev) &&
+            GetMonitorInfo(MonitorFromWindow(hwnd,
+                MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            SetWindowLong(hwnd, GWL_STYLE,
+                dwStyle & ~WS_OVERLAPPEDWINDOW);
+            SetWindowPos(hwnd, HWND_TOP,
+                mi.rcMonitor.left, mi.rcMonitor.top,
+                mi.rcMonitor.right - mi.rcMonitor.left,
+                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
+    }
+    else {
+        SetWindowLong(hwnd, GWL_STYLE,
+            dwStyle | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(hwnd, g_wpPrev);
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+            SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     //static HANDLE worker_thread_handle;
     switch (message)
     {
+    case WM_SYSKEYDOWN:
+    {
+        if (lparam & (1 << 29) ) { //Alt is down //TODO(fran): I couldnt find a way to avoid key repeats, if the user keeps alt+enter pressed then the window will go in and out of fullscreen repeatedly
+            //TODO? INFO: ChangeDisplaySettings allows you to specify in detail the monitor state you want when on fullscreen, eg change refresh rate
+            u32 vkcode = (u32)wparam; 
+            if(vkcode == VK_RETURN) //Enter is down
+                win32_switch_fullscreen(hwnd, &win32_global_state.previous_window_placement);
+        }
+        return DefWindowProc(hwnd, message, wparam, lparam);
+        break;
+    }
+#ifndef _DEBUG
+    case WM_SETCURSOR:
+    {
+        if (LOWORD(lparam) == HTCLIENT) {
+            SetCursor(NULL);
+            return 1;
+        }
+        else return DefWindowProc(hwnd, message, wparam, lparam);
+        break;
+    }
+#endif
     //case WM_CREATE:
     //{
     //    //worker_thread_handle=CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)Game, hwnd, 0, NULL);
