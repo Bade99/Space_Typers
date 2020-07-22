@@ -702,7 +702,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 timeEndPeriod(desired_scheduler_ms);
             }
             else { /*TODO(fran): LOG missed a frame*/ }
-            printf("game update hz: %d\ntarget sec per frame: %f\ndt per sec: %f\nfps: %f\n", game_update_hz, target_sec_per_frame,dt_per_sec,1/dt_per_sec);
+            //printf("game update hz: %d\ntarget sec per frame: %f\ndt per sec: %f\nfps: %f\n", game_update_hz, target_sec_per_frame,dt_per_sec,1/dt_per_sec);
         }
         //QueryPerformanceCounter(&end_counter);
         //dt_per_sec = (f32)(end_counter.QuadPart - last_counter.QuadPart) / (f32)pc_freq.QuadPart;
@@ -1000,9 +1000,8 @@ u32 safe_u64_to_u32(u64 n) {
     return (u32)n;
 }
 
-std::pair<void*, u32> platform_read_entire_file(const char* filename){
-    void* res_mem=0;
-    u32 res_mem_sz = 0;
+platform_read_entire_file_res platform_read_entire_file(const char* filename){
+    platform_read_entire_file_res res{0};
     HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if (hFile != INVALID_HANDLE_VALUE) {
         defer{ CloseHandle(hFile); };
@@ -1012,8 +1011,8 @@ std::pair<void*, u32> platform_read_entire_file(const char* filename){
             if (mem) {
                 if (DWORD bytes_read; ReadFile(hFile, mem, sz32, &bytes_read, 0) && sz32==bytes_read) {
                     //SUCCESS
-                    res_mem = mem;
-                    res_mem_sz = sz32;
+                    res.mem = mem;
+                    res.sz = sz32;
                 }
                 else {
                     platform_free_file_memory(mem);
@@ -1021,7 +1020,7 @@ std::pair<void*, u32> platform_read_entire_file(const char* filename){
             }
         }
     }
-    return { res_mem,res_mem_sz };
+    return res;
 }
 bool platform_write_entire_file(const char* filename, void* memory, u32 mem_sz){
     bool res = false;

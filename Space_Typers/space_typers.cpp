@@ -75,6 +75,7 @@ img DEBUG_load_png(const char* filename) {
         u8* bytes = stbi_load_from_memory((u8*)img_mem, img_sz, &width, &height, &channels, 0); //NOTE: this interface always assumes 8 bits per component
         platform_free_file_memory(img_mem);
         if (bytes) {
+            game_assert(channels == 4);
             res.mem = bytes;
             res.width = width;
             res.height = height;
@@ -101,6 +102,37 @@ img DEBUG_load_png(const char* filename) {
 void DEBUG_unload_png(img* image) {
     stbi_image_free(image->mem);
     //TODO(fran): zero the other members?
+}
+
+void game_render_img_ignore_transparency(game_framebuffer* buf, v2_f32 pos, img* image) {
+
+    v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
+    v2_i32 max = { round_f32_to_i32(pos.x + image->width), round_f32_to_i32(pos.y + image->height) };
+
+    int offset_x = 0;
+    int offset_y = 0;
+
+    if (min.x < 0) { offset_x = -min.x;  min.x = 0; }
+    if (min.y < 0) { offset_y = -min.y; min.y = 0; }
+    if (max.x > buf->width)max.x = buf->width;
+    if (max.y > buf->height)max.y = buf->height;
+
+    int img_pitch = image->width * image->channels * image->bytes_per_channel;
+
+    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
+    u8* img_row = (u8*)image->mem + offset_x * image->channels * image->bytes_per_channel + offset_y * img_pitch;
+
+    for (int y = min.y; y < max.y; y++) {
+        u32* pixel = (u32*)row;
+        u32* img_pixel = (u32*)img_row;
+        for (int x = min.x; x < max.x; x++) {
+            //AARRGGBB
+            *pixel++ = *img_pixel++;
+        }
+        row += buf->pitch;
+        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+    }
+
 }
 
 void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
@@ -262,7 +294,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_st->world.stages[0].lvls[1].words[0].rect.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].words[0].color = { 0.f,0.f,1.f,1.f };
 
-        game_st->DEBUG_background = DEBUG_load_png("assets/img/dark_night_sky.png"); //TODO(fran): release mem DEBUG_unload_png();
+        game_st->DEBUG_background = DEBUG_load_png("assets/img/stars.png"); //TODO(fran): release mem DEBUG_unload_png();
         //game_st->DEBUG_background.align = { 20,20 };
         game_st->DEBUG_menu = DEBUG_load_png("assets/img/down.png"); //TODO(fran): release mem DEBUG_unload_png();
         //game_st->DEBUG_menu.align = { 20,20 };
@@ -308,13 +340,14 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     if (input->controller.down.ended_down) {
         dd_word.y = -1.f;
     }
-    if (dd_word.x && dd_word.y) {//manual correction for diagonal movement
-        dd_word *= sqrtf(.5f);
+    if (f32 l = lenght_sq(dd_word); l > 1.f) { //Normalizing the vector, diagonal movement is fixed and also takes care of higher values than 1
+        dd_word *= (1.f / sqrtf(l));
     }
-    f32 constant_accel = 10.f*game_st->word_height_meters; //m/s^2
+    f32 constant_accel = 20.f*game_st->word_height_meters; //m/s^2
     dd_word *= constant_accel;
     //TODO(fran): ordinary differential eqs
-    dd_word += -current_level->words[0].velocity; //basic "drag" //TODO(fran): understand why this doesnt completely eat the acceleration value
+    dd_word += -3.5f*current_level->words[0].velocity; //basic "drag" //TODO(fran): understand why this doesnt completely eat the acceleration value
+#if 0 //old collision detection
     {
         v2_f32 new_pos = .5f*dd_word*powf(input->dt_sec,2.f) + current_level->words[0].velocity * input->dt_sec + current_level->words[0].rect.pos;
         v2_f32 new_word_pos00{ new_pos.x - current_level->words[0].rect.radius.x,new_pos.y - current_level->words[0].rect.radius.y};
@@ -330,13 +363,53 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             !game_check_collision_point_to_rc(new_word_pos11, current_level->walls[0].rect)) { //TODO(fran): add collision checks for the mid points, if two objs are the same width for example then when they line up perfectly one can enter the other from the top or bottom. Or just move on to a new technique
             //TODO(fran): fix faster diagonal movement once we properly use vectors
 
-           current_level->words[0].rect.pos = new_pos;//TODO(fran): more operator overloading
+           current_level->words[0].rect.pos = new_pos;
 
            v2_f32 screen_offset = { (f32)frame_buf->width/2,(f32)frame_buf->height/2 };
 
            game_st->camera = current_level->words[0].rect.pos *game_st->word_meters_to_pixels - screen_offset;
         }
+        else {
+            v2_f32 wall_normal = {1,0};
+            //current_level->words[0].velocity -= 2 * dot(current_level->words[0].velocity, wall_normal)* wall_normal;//bounce
+            current_level->words[0].velocity -= 1 * dot(current_level->words[0].velocity, wall_normal)* wall_normal;//go in line with the wall
+        }
     }
+#else
+    //day 45, min 37 aprox, starts with collision detection "in p"
+    //day 46 just multiplayer support and entities, nothing on collision
+    //in the end we are going go to "search in t" (day 47)
+    {
+        //we test for the walls that are in our range of motion, and then we take the closest point where we hit (in my case with the limited amount of walls we might as well test all, at least to start)
+        v2_f32 pos_delta = .5f*dd_word*powf(input->dt_sec,2.f) + current_level->words[0].velocity * input->dt_sec;//NOTE: we'll start just checking a point
+        f32 closest_t=1.f; //we limit the time to the full motion that can occur
+        //for each wall...
+        colored_rc& wall = current_level->walls[0];
+        colored_rc& word = current_level->words[0];
+        v2_f32 min_wall = wall.rect.pos - wall.rect.radius;
+        v2_f32 max_wall = wall.rect.pos + wall.rect.radius;
+
+        auto test_wall = [](f32 wallx, f32 oldposx, f32 oldposy, f32 deltax, f32 deltay, f32* t_min, f32 miny, f32 maxy) {//TODO(fran): not a great algorithm, we still get stuck sometimes
+            if (deltax != 0.f) {
+                f32 t_res = (wallx - oldposx) / deltax;
+                f32 Y = oldposy + t_res * deltay;
+                if (t_res >= 0.f && t_res < *t_min && Y >= miny && Y <= maxy) {
+                    f32 epsilon = .001f;
+                    *t_min = maximum(.0f, t_res - epsilon); //probably instead of 0 should do epsilon
+                }
+            }
+        };
+
+        test_wall(min_wall.x, word.rect.pos.x, word.rect.pos.y, pos_delta.x, pos_delta.y, &closest_t, min_wall.y, max_wall.y);
+        test_wall(max_wall.x, word.rect.pos.x, word.rect.pos.y, pos_delta.x, pos_delta.y, &closest_t, min_wall.y, max_wall.y);
+        test_wall(min_wall.y, word.rect.pos.y, word.rect.pos.x, pos_delta.y, pos_delta.x, &closest_t, min_wall.x, max_wall.x);
+        test_wall(max_wall.y, word.rect.pos.y, word.rect.pos.x, pos_delta.y, pos_delta.x, &closest_t, min_wall.x, max_wall.x);
+
+        current_level->words[0].rect.pos += pos_delta*closest_t;
+
+        current_level->words[0].velocity += dd_word * input->dt_sec;//TODO
+    }
+#endif
 
     game_render_rectangle(frame_buf, { { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height } }, { 0,.5f,0.f,.5f });
     //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
@@ -344,9 +417,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //game_render_img(frame_buf, { -100,10 }, &game_st->DEBUG_background); 
     //game_render_img(frame_buf, { 1500,300 }, &game_st->DEBUG_background);
     //game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); 
-    game_render_img(frame_buf, { 500,800 }, &game_st->DEBUG_background); 
+    game_render_img_ignore_transparency(frame_buf, { (f32)frame_buf->width/2 - game_st->DEBUG_background.width / 2,(f32)frame_buf->height/2 - game_st->DEBUG_background.height/2 } , &game_st->DEBUG_background);
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
-    game_render_img(frame_buf, { 500,500 }, &game_st->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
+    game_render_img(frame_buf, { 0,(f32)frame_buf->height - game_st->DEBUG_menu.height }, &game_st->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
 
@@ -363,4 +436,5 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     game_render_img(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &game_st->DEBUG_mouse);
 }
 
+//TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting
 //TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting

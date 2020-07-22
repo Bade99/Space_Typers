@@ -64,6 +64,17 @@ v2_f32& v2_f32::operator*=(f32 rhs_scalar) {
     return *this;
 }
 
+f32 dot(v2_f32 v1, v2_f32 v2) {
+    f32 res = v1.x * v2.x + v1.y * v2.y;
+    return res;
+}
+
+f32 lenght_sq(v2_f32 v) {
+    f32 res;
+    res = dot(v, v);
+    return res;
+}
+
 
 //V2_I32
 struct v2_i32 {
