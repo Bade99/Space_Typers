@@ -28,6 +28,13 @@ v2_f32 operator*(f32 scalar, v2_f32 v) { //NOTE: waiting for C++20 where I think
     return res;
 }
 
+v2_f32 operator/(v2_f32 v, f32 scalar) {
+    v2_f32 res;
+    res.x = v.x / scalar;
+    res.y = v.y / scalar;
+    return res;
+}
+
 v2_f32 operator-(v2_f32 v1, v2_f32 v2) {
     v2_f32 res;
     res.x = v1.x - v2.x;

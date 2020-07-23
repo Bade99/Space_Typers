@@ -62,9 +62,9 @@ i32 round_f32_to_i32(f32 n) {
     return res;
 }
 
-bool game_check_collision_point_to_rc(v2_f32 p, rc r) {
-    return p.x > (r.pos.x-r.radius.x)&& p.x < (r.pos.x + r.radius.x) && p.y >(r.pos.y - r.radius.y) && p.y < (r.pos.y + r.radius.y);
-}
+//bool game_check_collision_point_to_rc(v2_f32 p, rc r) {
+//    return p.x > (r.center.x-r.radius.x)&& p.x < (r.center.x + r.radius.x) && p.y >(r.center.y - r.radius.y) && p.y < (r.center.y + r.radius.y);
+//}
 
 img DEBUG_load_png(const char* filename) {
     img res{0};
@@ -186,14 +186,14 @@ void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
 
 struct min_max_v2_f32 { v2_f32 min, max; }; //NOTE: game_coords means meters
 min_max_v2_f32 transform_to_screen_coords(rc game_coords, f32 meters_to_pixels, v2_f32 camera_pixels, v2_f32 lower_left_pixels) {
-    v2_f32 min_pixels = { (game_coords.pos.x - game_coords.radius.x) * meters_to_pixels, (game_coords.pos.y + game_coords.radius.y) * meters_to_pixels };
+    v2_f32 min_pixels = { (game_coords.center.x - game_coords.radius.x) * meters_to_pixels, (game_coords.center.y + game_coords.radius.y) * meters_to_pixels };
 
     v2_f32 min_pixels_camera = min_pixels - camera_pixels;
 
     //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
     v2_f32 min_pixels_camera_screen = { lower_left_pixels.x + min_pixels_camera.x , lower_left_pixels.y - min_pixels_camera.y };
 
-    v2_f32 max_pixels = { (game_coords.pos.x + game_coords.radius.x) * meters_to_pixels, (game_coords.pos.y - game_coords.radius.y) * meters_to_pixels };
+    v2_f32 max_pixels = { (game_coords.center.x + game_coords.radius.x) * meters_to_pixels, (game_coords.center.y - game_coords.radius.y) * meters_to_pixels };
 
     v2_f32 max_pixels_camera = max_pixels - camera_pixels;
 
@@ -228,6 +228,117 @@ void game_render_rectangle(game_framebuffer* buf, min_max_v2_f32 min_max, argb_f
     }
 }
 
+void game_add_entity(game_state* game_st, const game_entity* new_entity) {
+    game_assert(game_st->entity_count+1 < sizeof_arr(game_st->entities));
+    game_st->entities[game_st->entity_count] = *new_entity;
+    game_st->entity_count++;
+}
+
+void game_clear_entities(game_state* game_st) {
+    game_st->entity_count = 1;//TODO(fran): once again, 1 or 0?
+}
+
+bool test_wall(f32 wallx, f32 oldposx, f32 oldposy, f32 deltax, f32 deltay, f32* t_min, f32 miny, f32 maxy){
+    if (deltax != 0.f) {
+        f32 t_res = (wallx - oldposx) / deltax;
+        f32 Y = oldposy + t_res * deltay;
+        if (t_res >= 0.f && t_res < *t_min && Y >= miny && Y <= maxy) {
+            f32 epsilon = .001f;
+            *t_min = maximum(.0f, t_res - epsilon);
+            return true;
+        }
+    }
+    return false;
+}
+
+
+void move_entity(game_entity* entity, v2_f32 acceleration, const game_state* game_st, const game_input* input) {
+    v2_f32 pos_delta = .5f * acceleration * powf(input->dt_sec, 2.f) + entity->velocity * input->dt_sec;//NOTE: we'll start just checking a point
+    entity->velocity += acceleration * input->dt_sec;//TODO: where does this go? //NOTE: Casey put it here, it had it before calculating pos_delta
+    rc e = rc_center_radius(entity->pos, entity->radius);
+    
+    if (entity->collides) {
+        for (int attempt = 0; attempt < 4; attempt++) {
+            f32 closest_t = 1.f; //we limit the time to the full motion that can occur //TODO(fran): shouldnt this two be reset each time through the entity loop?
+            v2_f32 wall_normal{ 0,0 };
+            u32 hit_entity_index = 0;
+            v2_f32 desired_position = entity->pos + pos_delta;
+            for (int entity_index = 1; entity_index < sizeof_arr(game_st->entities); entity_index++)//TODO(fran): what to do, always start from 1?
+            {
+                const game_entity* possible_collider = &game_st->entities[entity_index];
+                if (possible_collider->collides && possible_collider != entity) {
+                    rc collider = rc_center_radius(possible_collider->pos, possible_collider->radius);
+                    //Following the Minkowski Sum now we reduce the word(player) to a point and expand every other object(wall) by the size of the word, so with no need to change any of the code we get for free collision detection for the entire shape of the word
+                    collider.radius += e.radius;
+                    v2_f32 min_collider = collider.center - collider.radius;
+                    v2_f32 max_collider = collider.center + collider.radius;
+
+
+                    //TODO: mirar dia 52 min 9:47, él NO usa e.pos acá sino "Rel" que es igual a e.pos-collider.pos
+                    if (test_wall(min_collider.x, e.center.x, e.center.y, pos_delta.x, pos_delta.y, &closest_t, min_collider.y, max_collider.y)) {
+                        wall_normal = { -1,0 };
+                        hit_entity_index = entity_index;
+                    }
+                    if (test_wall(max_collider.x, e.center.x, e.center.y, pos_delta.x, pos_delta.y, &closest_t, min_collider.y, max_collider.y)) {
+                        wall_normal = { 1,0 };
+                        hit_entity_index = entity_index;
+                    }
+                    if (test_wall(min_collider.y, e.center.y, e.center.x, pos_delta.y, pos_delta.x, &closest_t, min_collider.x, max_collider.x)) {
+                        wall_normal = { 0,-1 };
+                        hit_entity_index = entity_index;
+                    }
+                    if (test_wall(max_collider.y, e.center.y, e.center.x, pos_delta.y, pos_delta.x, &closest_t, min_collider.x, max_collider.x)) {
+                        wall_normal = { 0,1 };
+                        hit_entity_index = entity_index;
+                    }
+                }
+            }//NOTE: if we have two collisions we miss all but the last one I guess
+
+            entity->pos += pos_delta * closest_t;
+            if (hit_entity_index) {
+                entity->velocity -= 1 * dot(entity->velocity, wall_normal) * wall_normal;//go in line with the wall
+                pos_delta = desired_position - entity->pos;
+                pos_delta -= 1 * dot(pos_delta, wall_normal) * wall_normal;
+
+                game_entity hit_entity = game_st->entities[hit_entity_index]; //TODO(fran): GetEntityIndex function
+                //TODO(fran): check if that entity has any behaviour on collision
+            }
+            else {
+                break;
+            }
+            //if (closest_t < 1.f) current_level->words[0].velocity = { 0,0 }; //REMEMBER: the biggest problem with the player getting stuck was because we werent cancelling it's previous velocity after a collision
+        }
+    }
+    else {
+        entity->pos += pos_delta;
+    }
+}
+
+void game_initialize_entities(game_state* gs, game_level_map lvl, const game_entity* player) {
+    game_clear_entities(gs);
+    game_add_entity(gs, player); //NOTE: entity index 1 will always be for the player
+
+    for (u32 i = 0; i < lvl.wall_count;i++) {
+        game_entity wall;
+        wall.collides = true;
+        wall.color = lvl.walls[i].color;
+        wall.pos = lvl.walls[i].rect.center;
+        wall.radius = lvl.walls[i].rect.radius;
+        wall.velocity = { 0,0 };
+        game_add_entity(gs, &wall);
+    }
+
+    for (u32 i = 0; i < lvl.word_count; i++) { //TODO: store word spawner and max words at the same time
+        game_entity word;
+        word.collides = true;
+        word.color = lvl.words[i].color;
+        word.pos = lvl.words[i].rect.center;
+        word.radius = lvl.words[i].rect.radius;
+        word.velocity = { 0,0 };
+        game_add_entity(gs, &word);
+    }
+}
+
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
     game_assert(sizeof(game_state) <= memory->permanent_storage_sz);
     game_state* game_st = (game_state*)memory->permanent_storage;
@@ -242,14 +353,19 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE IDEA: I see an aesthetic with oranges and white, warm colors, reds
 
-    //game_level_map lvl_map;
-    //lvl_map.origin = { 0,0 };
-    //lvl_map.unit = 1;
-
     //IDEA: different visible walls for the words to collide against, so it creates sort of a priority system where some words must be typed first cause they are going to collide with a wall that is much closer than the one on the other side of the screen
+
+    game_entity init_player_entity;
+    init_player_entity.collides = true;
+    init_player_entity.color = { .0f,.0f,.0f,1.0f };
+    init_player_entity.pos = { 11.f ,5.f}; //NOTE: dont care to multiply by meters, also the first time they are not defined yet
+    init_player_entity.radius = { .75f, .75f};
+    init_player_entity.velocity = {0,0};
 
     if (!memory->is_initialized) {
         //game_st->hz = 256;
+        game_entity null_entity{ 0 };
+        game_add_entity(game_st, &null_entity); //NOTE: entity index 0 is reserved as NULL
 
         game_st->word_height_meters = 1.5f;//TODO(fran): maybe this would be better placed inside world
         game_st->word_height_pixels = 60;
@@ -278,19 +394,19 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_st->world.stages[0].lvls[1].wall_count = 1;
         game_st->world.stages[0].lvls[1].word_count = 1;
 
-        game_st->world.stages[0].lvls[0].walls[0].rect.pos = { 14.5f * game_st->word_height_meters, 9.5f * game_st->word_height_meters }; //TODO(fran): allocate space for all these
+        game_st->world.stages[0].lvls[0].walls[0].rect.center = { 14.5f * game_st->word_height_meters, 9.5f * game_st->word_height_meters }; //TODO(fran): allocate space for all these
         game_st->world.stages[0].lvls[0].walls[0].rect.radius = { .5f * game_st->word_height_meters , 4.5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[0].walls[0].color = { 0.f,1.f,0.f,0.f };
 
-        game_st->world.stages[0].lvls[0].words[0].rect.pos = { 16.5f * game_st->word_height_meters , 10.5f * game_st->word_height_meters };
+        game_st->world.stages[0].lvls[0].words[0].rect.center = { 16.5f * game_st->word_height_meters , 10.5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[0].words[0].rect.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[0].words[0].color = { 0.f,1.f,1.f,1.f };
 
-        game_st->world.stages[0].lvls[1].walls[0].rect.pos = { 8.5f * game_st->word_height_meters, 7.5f * game_st->word_height_meters };
+        game_st->world.stages[0].lvls[1].walls[0].rect.center = { 8.5f * game_st->word_height_meters, 7.5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].walls[0].rect.radius = { .5f * game_st->word_height_meters , 4.5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].walls[0].color = { 0.f,1.f,0.f,0.f };
 
-        game_st->world.stages[0].lvls[1].words[0].rect.pos = { 16.5f * game_st->word_height_meters , 10.5f * game_st->word_height_meters };
+        game_st->world.stages[0].lvls[1].words[0].rect.center = { 16.5f * game_st->word_height_meters , 10.5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].words[0].rect.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
         game_st->world.stages[0].lvls[1].words[0].color = { 0.f,0.f,1.f,1.f };
 
@@ -302,30 +418,26 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
         game_st->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
 
+        game_initialize_entities(game_st, game_st->world.stages[0].lvls[game_st->world.stages[0].current_lvl], &init_player_entity);
+
         memory->is_initialized = true; //TODO(fran): should the platform layer do this?
     }
 
     //TODO(fran):objects may need z position to resolve conflicts with overlapping
 
-    //if (input->controller.up.ended_down) { game_st->yoff += 5; } //REMEMBER: you get the input for the previous frame
-    //if (input->controller.down.ended_down) { game_st->yoff -= 5; } //TODO(fran): axis (0,0) should be the bottom left corner, x positive to the right and y positive up
-    //if (input->controller.right.ended_down) { game_st->xoff += 5; }
-    //if (input->controller.left.ended_down) { game_st->xoff -= 5; }
+    //REMEMBER: you get the input for the previous frame
     
-    //game_render(frame_buf, game_st->xoff, game_st->yoff);
-    //argb_f32 player_color = { 0,1.f,1.f,1.f};
-    //if (input->controller.mouse_buttons[0].ended_down) player_color = { 0,1.f,0.f,0.f };
-    //if(input->controller.mouse_buttons[1].ended_down) player_color = { 0,0.f,1.f,0.f };
-    //if (input->controller.mouse_buttons[2].ended_down) player_color = { 0,0.f,0.f,1.f };
-
     if (input->controller.back.ended_down) {
         game_st->world.stages[0].current_lvl++;
         game_st->world.stages[0].current_lvl %= game_st->world.stages[0].level_count;
+
+        game_initialize_entities(game_st, game_st->world.stages[0].lvls[game_st->world.stages[0].current_lvl], &init_player_entity);
     }
 
     //IDEA: what if the platform layer gave you scaling information, so you set up your render like you want and then the only thing that needs to change is scaling
 
-    game_level_map* current_level = &game_st->world.stages[0].lvls[game_st->world.stages[0].current_lvl];
+    game_assert(game_st->entity_count >= 3); //null, player, wall, (actually 4 with the word)
+    game_entity& player_entity = game_st->entities[1];
 
     v2_f32 dd_word = { 0,0 }; //accel
     if (input->controller.right.ended_down) {
@@ -346,7 +458,58 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     f32 constant_accel = 20.f*game_st->word_height_meters; //m/s^2
     dd_word *= constant_accel;
     //TODO(fran): ordinary differential eqs
-    dd_word += -3.5f*current_level->words[0].velocity; //basic "drag" //TODO(fran): understand why this doesnt completely eat the acceleration value
+    dd_word += -3.5f* player_entity.velocity; //basic "drag" //TODO(fran): understand why this doesnt completely eat the acceleration value
+
+    move_entity(&player_entity, dd_word, game_st, input); //TODO(fran): for each entity that moves
+
+    v2_f32 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
+    game_st->camera = player_entity.pos *game_st->word_meters_to_pixels - screen_offset; //TODO(fran): nicer camera update, lerp
+
+    game_render_rectangle(frame_buf, { { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height } }, { 0,.5f,0.f,.5f });
+    //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
+
+    //game_render_img(frame_buf, { -100,10 }, &game_st->DEBUG_background); 
+    //game_render_img(frame_buf, { 1500,300 }, &game_st->DEBUG_background);
+    //game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); 
+    game_render_img_ignore_transparency(frame_buf, { (f32)frame_buf->width/2 - game_st->DEBUG_background.width / 2,(f32)frame_buf->height/2 - game_st->DEBUG_background.height/2 } , &game_st->DEBUG_background);
+    //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
+    game_render_img(frame_buf, { 0,(f32)frame_buf->height - game_st->DEBUG_menu.height }, &game_st->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
+
+    //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
+
+    for (u32 i = 1; i < game_st->entity_count; i++) { //TODO: again 1 or 0
+        const game_entity* e = &game_st->entities[i];
+        game_render_rectangle(
+            frame_buf, 
+            transform_to_screen_coords({ e->pos , e->radius }, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels), 
+            e->color);
+    }
+
+    game_render_img(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &game_st->DEBUG_mouse);
+}
+
+//TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
 #if 0 //old collision detection
     {
         v2_f32 new_pos = .5f*dd_word*powf(input->dt_sec,2.f) + current_level->words[0].velocity * input->dt_sec + current_level->words[0].rect.pos;
@@ -375,66 +538,62 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             current_level->words[0].velocity -= 1 * dot(current_level->words[0].velocity, wall_normal)* wall_normal;//go in line with the wall
         }
     }
-#else
+#elif 0 //a little more advanced collision detection
     //day 45, min 37 aprox, starts with collision detection "in p"
     //day 46 just multiplayer support and entities, nothing on collision
     //in the end we are going go to "search in t" (day 47)
     {
         //we test for the walls that are in our range of motion, and then we take the closest point where we hit (in my case with the limited amount of walls we might as well test all, at least to start)
-        v2_f32 pos_delta = .5f*dd_word*powf(input->dt_sec,2.f) + current_level->words[0].velocity * input->dt_sec;//NOTE: we'll start just checking a point
-        f32 closest_t=1.f; //we limit the time to the full motion that can occur
+        v2_f32 pos_delta = .5f*dd_word*powf(input->dt_sec,2.f) + player_entity.velocity * input->dt_sec;//NOTE: we'll start just checking a point
+        player_entity.velocity += dd_word * input->dt_sec;//TODO: where does this go? //NOTE: Casey put it here, it had it before calculating pos_delta
         //for each wall...
-        colored_rc& wall = current_level->walls[0];
-        colored_rc& word = current_level->words[0];
-        v2_f32 min_wall = wall.rect.pos - wall.rect.radius;
-        v2_f32 max_wall = wall.rect.pos + wall.rect.radius;
+        rc word = { player_entity.pos,player_entity.radius };
+        rc wall = { game_st->entities[2].pos , game_st->entities[2].radius };
+        //Following the Minkowski Sum now we reduce the word(player) to a point and expand every other object(wall) by the size of the word, so with no need to change any of the code we get for free collision detection for the entire shape of the word
+        wall.radius += word.radius;
+        v2_f32 min_wall = wall.pos - wall.radius;
+        v2_f32 max_wall = wall.pos + wall.radius;
 
-        auto test_wall = [](f32 wallx, f32 oldposx, f32 oldposy, f32 deltax, f32 deltay, f32* t_min, f32 miny, f32 maxy) {//TODO(fran): not a great algorithm, we still get stuck sometimes
+        auto test_wall = [](f32 wallx, f32 oldposx, f32 oldposy, f32 deltax, f32 deltay, f32* t_min, f32 miny, f32 maxy) -> bool {
             if (deltax != 0.f) {
                 f32 t_res = (wallx - oldposx) / deltax;
                 f32 Y = oldposy + t_res * deltay;
                 if (t_res >= 0.f && t_res < *t_min && Y >= miny && Y <= maxy) {
                     f32 epsilon = .001f;
                     *t_min = maximum(.0f, t_res - epsilon); //probably instead of 0 should do epsilon
+                    return true;
                 }
             }
+            return false;
         };
+        f32 remaining_t = 1.f;
+        for (int attempt = 0; attempt < 4 && remaining_t>0.f; attempt++) {
+            f32 closest_t= 1.f; //we limit the time to the full motion that can occur
+            v2_f32 wall_normal{ 0,0 };
 
-        test_wall(min_wall.x, word.rect.pos.x, word.rect.pos.y, pos_delta.x, pos_delta.y, &closest_t, min_wall.y, max_wall.y);
-        test_wall(max_wall.x, word.rect.pos.x, word.rect.pos.y, pos_delta.x, pos_delta.y, &closest_t, min_wall.y, max_wall.y);
-        test_wall(min_wall.y, word.rect.pos.y, word.rect.pos.x, pos_delta.y, pos_delta.x, &closest_t, min_wall.x, max_wall.x);
-        test_wall(max_wall.y, word.rect.pos.y, word.rect.pos.x, pos_delta.y, pos_delta.x, &closest_t, min_wall.x, max_wall.x);
+            if (test_wall(min_wall.x, word.pos.x, word.pos.y, pos_delta.x, pos_delta.y, &closest_t, min_wall.y, max_wall.y)) {
+                wall_normal = { -1,0 };
+            }
+            if (test_wall(max_wall.x, word.pos.x, word.pos.y, pos_delta.x, pos_delta.y, &closest_t, min_wall.y, max_wall.y)) {
+                wall_normal = { 1,0 };
+            }
+            if (test_wall(min_wall.y, word.pos.y, word.pos.x, pos_delta.y, pos_delta.x, &closest_t, min_wall.x, max_wall.x)) {
+                wall_normal = { 0,-1 };
+            }
+            if (test_wall(max_wall.y, word.pos.y, word.pos.x, pos_delta.y, pos_delta.x, &closest_t, min_wall.x, max_wall.x)) {
+                wall_normal = { 0,1 };
+            }
 
-        current_level->words[0].rect.pos += pos_delta*closest_t;
+            player_entity.pos += pos_delta * closest_t;
 
-        current_level->words[0].velocity += dd_word * input->dt_sec;//TODO
+
+            //current_level->words[0].velocity += dd_word * input->dt_sec;//TODO: where does this go?
+            //if (closest_t < 1.f)
+            //    current_level->words[0].velocity = { 0,0 }; //NOTE: REMEMBER: the biggest problem with the player getting stuck was because we werent cancelling it's previous velocity after a collision
+            player_entity.velocity -= 1 * dot(player_entity.velocity, wall_normal) * wall_normal;//go in line with the wall
+            pos_delta -= 1 * dot(pos_delta, wall_normal) * wall_normal;
+            remaining_t -= closest_t*remaining_t; //TODO(fran): I dont think I understand this
+        }
     }
 #endif
-
-    game_render_rectangle(frame_buf, { { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height } }, { 0,.5f,0.f,.5f });
-    //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
-
-    //game_render_img(frame_buf, { -100,10 }, &game_st->DEBUG_background); 
-    //game_render_img(frame_buf, { 1500,300 }, &game_st->DEBUG_background);
-    //game_render_img(frame_buf, { 500,-100 }, &game_st->DEBUG_background); 
-    game_render_img_ignore_transparency(frame_buf, { (f32)frame_buf->width/2 - game_st->DEBUG_background.width / 2,(f32)frame_buf->height/2 - game_st->DEBUG_background.height/2 } , &game_st->DEBUG_background);
-    //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
-    game_render_img(frame_buf, { 0,(f32)frame_buf->height - game_st->DEBUG_menu.height }, &game_st->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
-
-    //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
-
-    game_render_rectangle(
-        frame_buf, 
-        transform_to_screen_coords(current_level->walls[0].rect, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels), 
-        current_level->walls[0].color);
-
-    game_render_rectangle(
-        frame_buf,
-        transform_to_screen_coords(current_level->words[0].rect, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels),
-        current_level->words[0].color);
-
-    game_render_img(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &game_st->DEBUG_mouse);
-}
-
-//TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting
-//TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting
+*/

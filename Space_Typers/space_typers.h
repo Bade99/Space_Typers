@@ -42,16 +42,45 @@ struct img {
 //};
 
 struct rc {
-    v2_f32 pos;
+    v2_f32 center;
     v2_f32 radius;
+
+    v2_f32 get_min() {
+        v2_f32 res = center - radius;
+        return res;
+    }
+
+    v2_f32 get_max() {
+        v2_f32 res = center + radius;
+        return res;
+    }
 };
+
+rc rc_min_max(v2_f32 min, v2_f32 max) { //NOTE REMEMBER: I like this idea
+    rc res;
+    res.center = (max + min) / 2.f;
+    res.radius = (max - min) / 2.f;
+    return res;
+}
+
+rc rc_center_radius(v2_f32 center, v2_f32 radius) {
+    rc res;
+    res.center = center;
+    res.radius = radius;
+    return res;
+}
+
+bool is_in_rc(v2_f32 p, rc r) {
+    //NOTE: we dont include the final coordinate point
+    bool res = p.x >= r.get_min().x && p.x < r.get_max().x && p.y >= r.get_min().y && p.y < r.get_max().y;
+    return res;
+}
 
 struct colored_rc {
     rc rect;
     argb_f32 color;
     v2_f32 velocity;
 };
-
 
 //struct game_state_TODO {
 //    float accumulated_time;
@@ -109,6 +138,17 @@ struct game_world{
     u32 current_stage;
 };
 
+struct game_entity {
+    v2_f32 pos;
+    v2_f32 radius;
+    argb_f32 color;
+    v2_f32 velocity;
+    //v2_f32 acceleration; TODO
+    bool collides;
+    //utf16 txt[25];
+    //TODO(fran): add enum for entity type?
+};
+
 struct game_state {
     //int xoff;
     //int yoff;
@@ -125,8 +165,10 @@ struct game_state {
     img DEBUG_mouse;
 
     v2_f32 camera;
+
+    game_entity entities[20];
+    u32 entity_count;
 };
 
-
-
+//TODO(fran): check what casey said about adding static to functions to reduce link/compilation time (explanation in day 53, min ~1:05:00)
 
