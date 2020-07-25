@@ -7,13 +7,15 @@
 
 #include "space_typers_img.h"
 
+#include "space_typers_math.h"
+
 #if _DEBUG //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
 #define game_assert(expression) if(!(expression)){*(int*)0=0;}
 #else
 #define game_assert(expression) 
 #endif
 
-#define sizeof_arr(arr) sizeof(arr)/sizeof((arr)[0])
+#define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
 
 f32 minimum(f32 a, f32 b) { //TODO(fran): create math .h file or similar
     return a < b ? a : b;
@@ -92,15 +94,33 @@ struct colored_rc {
 //    game_world world;//TODO(fran): real gameworld and camera to determinate what to show
 //};
 
+enum game_entity_type {
+    entity_null,
+    entity_player,
+    entity_word,
+    entity_wall,
+    entity_word_spawner
+};
+
+struct game_entity {
+    v2_f32 pos;
+    v2_f32 radius;
+    argb_f32 color;
+    v2_f32 velocity;
+    v2_f32 acceleration; //TODO: apply to every entity
+    bool collides;
+    //utf16 txt[25];
+    //TODO(fran): add enum for entity type?
+    game_entity_type type;
+
+    //Word spawner
+    f32 accumulated_time;
+    f32 time_till_next_word_sec;
+};
+
 struct game_level_map {
-    //v2_f32 origin;
-    //f32 unit;
-    //colored_rc wall; //TODO(fran): this will be a pointer to n walls, we should store a counter too
-    colored_rc* walls;
-    u32 wall_count;
-    //colored_rc word;
-    colored_rc* words;
-    u32 word_count;
+    game_entity* entities;
+    u32 entity_count;
 };
 
 struct game_stage {
@@ -138,16 +158,7 @@ struct game_world{
     u32 current_stage;
 };
 
-struct game_entity {
-    v2_f32 pos;
-    v2_f32 radius;
-    argb_f32 color;
-    v2_f32 velocity;
-    //v2_f32 acceleration; TODO
-    bool collides;
-    //utf16 txt[25];
-    //TODO(fran): add enum for entity type?
-};
+
 
 struct game_state {
     //int xoff;

@@ -36,7 +36,7 @@ void _my_assert(const wchar_t* exp, const wchar_t* file, unsigned int line) {
     MessageBoxW(0,txt,L"Assertion failed!", MB_TOPMOST);//TODO(fran): change to something that does not need windows libs
     //std::terminate(); //TODO(fran): maybe just write to null
 }
-
+//TODO(fran): I dont see much benefit from the message box instead of just showing the code
 #define win32_assert(expression) (void)(                                                       \
             (!!(expression)) ||                                                              \
             (_my_assert(_CRT_WIDE(#expression), _CRT_WIDE(__FILE__), (unsigned)(__LINE__)), 0) || \
@@ -859,6 +859,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
             u32 vkcode = (u32)wparam; 
             if(vkcode == VK_RETURN) //Enter is down
                 win32_switch_fullscreen(hwnd, &win32_global_state.previous_window_placement);
+            //TODO(fran): alt+f4 gets handled automatically, we may want to handle it ourselves in case we need to do some extra things
         }
         return DefWindowProc(hwnd, message, wparam, lparam);
         break;
