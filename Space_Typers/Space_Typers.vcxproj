@@ -151,11 +151,13 @@
   <ItemGroup>
     <ClInclude Include="space_typers.h" />
     <ClInclude Include="Resource.h" />
+    <ClInclude Include="space_typers_font.h" />
     <ClInclude Include="space_typers_img.h" />
     <ClInclude Include="space_typers_math.h" />
     <ClInclude Include="space_typers_platform.h" />
-    <ClInclude Include="space_typers_vectors.h" />
+    <ClInclude Include="space_typers_vector.h" />
     <ClInclude Include="stb_image.h" />
+    <ClInclude Include="stb_truetype.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="space_typers.cpp">

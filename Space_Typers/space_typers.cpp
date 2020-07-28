@@ -1,8 +1,8 @@
-#include "space_typers.h"
+ï»¿#include "space_typers.h"
 
 //REMAINDERS:
-//·optimization fp:fast
-//·optimization (google) intel intrinsics guide
+//Â·optimization fp:fast
+//Â·optimization (google) intel intrinsics guide
 
 
 //void game_render(game_framebuffer* buf, int xoff, int yoff) {
@@ -184,7 +184,8 @@ void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
 
 }
 
-struct min_max_v2_f32 { v2_f32 min, max; }; //NOTE: game_coords means meters
+
+struct min_max_v2_f32 { v2_f32 min, max; }; //NOTE: game_coords means meters //TODO(fran): change to rc2
 min_max_v2_f32 transform_to_screen_coords(rc game_coords, f32 meters_to_pixels, v2_f32 camera_pixels, v2_f32 lower_left_pixels) {
     v2_f32 min_pixels = { (game_coords.center.x - game_coords.radius.x) * meters_to_pixels, (game_coords.center.y + game_coords.radius.y) * meters_to_pixels };
 
@@ -200,6 +201,54 @@ min_max_v2_f32 transform_to_screen_coords(rc game_coords, f32 meters_to_pixels, 
     v2_f32 max_pixels_camera_screen = { lower_left_pixels.x + max_pixels_camera.x , lower_left_pixels.y - max_pixels_camera.y };
 
     return { min_pixels_camera_screen , max_pixels_camera_screen };
+}
+
+void render_char(game_framebuffer* buf, min_max_v2_f32 min_max, u8* bmp, int width, int height) {
+    //NOTE: stb creates top down img with 1 byte per pixel
+    v2_i32 min = { round_f32_to_i32(min_max.min.x), round_f32_to_i32(min_max.min.y) };
+    v2_i32 max = { round_f32_to_i32(min_max.max.x), round_f32_to_i32(min_max.max.y) };
+
+    int offset_x = 0;
+    int offset_y = 0;
+
+    if (min.x < 0) { offset_x = -min.x;  min.x = 0; }
+    if (min.y < 0) { offset_y = -min.y; min.y = 0; }
+    if (max.x > buf->width)max.x = buf->width;
+    if (max.y > buf->height)max.y = buf->height;
+
+    int img_pitch = width;
+
+    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
+    u8* img_row = bmp + offset_x + offset_y * img_pitch;
+
+    for (int y = min.y; y < max.y; y++) {
+        u32* pixel = (u32*)row;
+        u8* img_pixel = img_row;
+        for (int x = min.x; x < max.x; x++) {
+            //AARRGGBB
+
+            //very slow linear blend
+            f32 s_a = (f32)(*img_pixel) / 255.f; //source
+            f32 s_r = (f32)(*img_pixel);
+            f32 s_g = (f32)(*img_pixel);
+            f32 s_b = (f32)(*img_pixel);
+
+            f32 d_r = (f32)((*pixel >> 16) & 0xFF); //dest
+            f32 d_g = (f32)((*pixel >> 8) & 0xFF);
+            f32 d_b = (f32)((*pixel >> 0) & 0xFF);
+
+            f32 r = (1.f - s_a) * d_r + s_a * s_r; //TODO(fran): what if the dest had an alpha different from 255?
+            f32 g = (1.f - s_a) * d_g + s_a * s_g;
+            f32 b = (1.f - s_a) * d_b + s_a * s_b;
+
+            *pixel = 0xFF << 24 | round_f32_to_i32(r) << 16 | round_f32_to_i32(g) << 8 | round_f32_to_i32(b) << 0;
+
+            pixel++;
+            img_pixel++;
+        }
+        row += buf->pitch;
+        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+    }
 }
 
 void game_render_rectangle(game_framebuffer* buf, min_max_v2_f32 min_max, argb_f32 colorf) {
@@ -234,6 +283,14 @@ void game_add_entity(game_state* game_st, const game_entity* new_entity) {
     game_st->entity_count++;
 }
 
+void game_remove_entity(game_state* gs, u32 index) {
+    assert(index < gs->entity_count);
+    if (index != gs->entity_count - 1) {
+        gs->entities[index] = gs->entities[gs->entity_count - 1];
+    }
+    gs->entity_count--;
+}
+
 void game_clear_entities(game_state* game_st) {
     game_st->entity_count = 1;//TODO(fran): once again, 1 or 0?
     game_assert(game_st->entities[0].type == entity_null);
@@ -252,22 +309,108 @@ bool test_wall(f32 wallx, f32 oldposx, f32 oldposy, f32 deltax, f32 deltay, f32*
     return false;
 }
 
+game_entity* get_entity(game_state* gs, u32 index) { 
+    return &gs->entities[index];
+}
 
-void move_entity(game_entity* entity, v2_f32 acceleration, const game_state* game_st, const game_input* input) {
+//INFO: allows for specifying specific This entity vs This entity collision decisions, not just by entity type
+void add_collision_rule(game_state* gs, game_entity* A, game_entity* B, bool should_collide) { //TODO(fran): change game_entity* to u32 indexes
+    //TODO: collapse this with should_collide
+    if (A > B) { //enforce order to simplify hash table access //TODO(fran): again probably straight checking the pointers is no good
+        game_entity* temp = A;
+        A = B;
+        B = temp;
+    }
+
+    //TODO(fran): better hash function
+    pairwise_collision_rule* found = 0;
+    u32 hash_bucket = (u32)A & (arr_count(gs->collision_rule_hash) - 1);
+    for (pairwise_collision_rule* rule = gs->collision_rule_hash[hash_bucket]; rule; rule = rule->next_in_hash) {
+        if (rule->a == A && rule->b == B) {
+            found = rule;
+            break;
+        }
+    }
+    if (!found) {
+        found = gs->first_free_collision_rule;
+        if (found) {
+            gs->first_free_collision_rule = gs->first_free_collision_rule->next_in_hash;
+        }
+        else {
+            found = push_mem(&gs->memory_arena, pairwise_collision_rule);
+        }
+        found->next_in_hash = gs->collision_rule_hash[hash_bucket];
+        gs->collision_rule_hash[hash_bucket] = found;
+    }
+    if (found) {
+        found->a = A;
+        found->b = B;
+        found->should_collide = should_collide;
+    }
+}
+
+bool should_collide(game_state* gs, game_entity* A, game_entity* B) {
+    bool res=false;
+    if (A != B) {
+        if (A > B) { //enforce order to simplify hash table access //TODO(fran): again probably straight checking the pointers is no good
+            game_entity* temp = A;
+            A = B;
+            B = temp;
+        }
+
+        if (is_set(A, entity_flag_alive) && is_set(B, entity_flag_alive)) res = true; //TODO(fran): property based logic goes here
+        //is_set(possible_collider, entity_flag_collides) && is_set(possible_collider, entity_flag_solid) && possible_collider != entity
+
+        //TODO(fran): better hash function
+        u32 hash_bucket = (u32)A & (arr_count(gs->collision_rule_hash) - 1);//TODO(fran): add u32 storage_index variable to game_entity struct, casting to u32 a pointer doesnt look too nice
+        for (pairwise_collision_rule* rule = gs->collision_rule_hash[hash_bucket]; rule; rule = rule->next_in_hash) {
+            if (rule->a == A && rule->b == B) {
+                res = rule->should_collide; //the rule overrides any other condition
+                break;
+            }
+        }
+    }
+    return res;
+}
+
+bool handle_collision(game_entity* A, game_entity* B) {
+    bool stops_on_collision = false;// is_set(entity, entity_flag_collides);
+
+    if (A->type == entity_word || B->type == entity_word)
+        stops_on_collision = false;
+    else 
+        stops_on_collision = true;
+
+    if (A->type > B->type) { //enforce order to reduce collision handling routines in almost half
+        game_entity* temp = A;
+        A = B;
+        B = temp;
+    }
+
+    if (A->type == entity_word && B->type == entity_wall) {
+        clear_flag(A, entity_flag_alive); //TODO(fran): once a word hits a wall we probably want to add a collision rule for avoiding further collisions between those two (right now it doesnt matter cause we destroy the word at the end of the frame but later there'll probably be some animation, like a fade, of the word before being destroyed and that would cause multiple collisions thus, for example reducing the life of the player more than once)
+    }
+
+    return stops_on_collision;
+}
+
+void move_entity(game_entity* entity, v2_f32 acceleration, game_state* gs, game_input* input) { //NOTE: im starting to feel the annoyance of const, everything that is used inside here (other functions for example) would have to get const'd as well, so out it went
     v2_f32 pos_delta = .5f * acceleration * powf(input->dt_sec, 2.f) + entity->velocity * input->dt_sec;//NOTE: we'll start just checking a point
     entity->velocity += acceleration * input->dt_sec;//TODO: where does this go? //NOTE: Casey put it here, it had it before calculating pos_delta
     rc e = rc_center_radius(entity->pos, entity->radius);
     
-    if (entity->collides) {
+    //NOTE: day 67, min ~30 presents ideas on collision detection and the ways of operating on the entities that have responses/specific behaviours to collisions 
+
+    //if (is_set(entity,entity_flag_collides)) { //NOTE: everybody checks collisions, for now
         for (int attempt = 0; attempt < 4; attempt++) {
             f32 closest_t = 1.f; //we limit the time to the full motion that can occur //TODO(fran): shouldnt this two be reset each time through the entity loop?
             v2_f32 wall_normal{ 0,0 };
-            u32 hit_entity_index = 0;
+            game_entity* hit_entity = 0;
             v2_f32 desired_position = entity->pos + pos_delta;
-            for (int entity_index = 1; entity_index < arr_count(game_st->entities); entity_index++)//TODO(fran): what to do, always start from 1?
+            for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++)//TODO(fran): what to do, always start from 1?
             {
-                const game_entity* possible_collider = &game_st->entities[entity_index];
-                if (possible_collider->collides && possible_collider != entity) {
+                game_entity* possible_collider = get_entity(gs,entity_index);//TODO(fran): GetEntityIndex function
+                if (should_collide(gs,entity,possible_collider)) {
                     rc collider = rc_center_radius(possible_collider->pos, possible_collider->radius);
                     //Following the Minkowski Sum now we reduce the word(player) to a point and expand every other object(wall) by the size of the word, so with no need to change any of the code we get for free collision detection for the entire shape of the word
                     collider.radius += e.radius;
@@ -275,44 +418,50 @@ void move_entity(game_entity* entity, v2_f32 acceleration, const game_state* gam
                     v2_f32 max_collider = collider.center + collider.radius;
 
 
-                    //TODO: mirar dia 52 min 9:47, él NO usa e.pos acá sino "Rel" que es igual a e.pos-collider.pos
+                    //TODO: mirar dia 52 min 9:47, Ã©l NO usa e.pos acÃ¡ sino "Rel" que es igual a e.pos-collider.pos
                     if (test_wall(min_collider.x, e.center.x, e.center.y, pos_delta.x, pos_delta.y, &closest_t, min_collider.y, max_collider.y)) {
                         wall_normal = { -1,0 };
-                        hit_entity_index = entity_index;
+                        hit_entity = possible_collider;
                     }
                     if (test_wall(max_collider.x, e.center.x, e.center.y, pos_delta.x, pos_delta.y, &closest_t, min_collider.y, max_collider.y)) {
                         wall_normal = { 1,0 };
-                        hit_entity_index = entity_index;
+                        hit_entity = possible_collider;
                     }
                     if (test_wall(min_collider.y, e.center.y, e.center.x, pos_delta.y, pos_delta.x, &closest_t, min_collider.x, max_collider.x)) {
                         wall_normal = { 0,-1 };
-                        hit_entity_index = entity_index;
+                        hit_entity = possible_collider;
                     }
                     if (test_wall(max_collider.y, e.center.y, e.center.x, pos_delta.y, pos_delta.x, &closest_t, min_collider.x, max_collider.x)) {
                         wall_normal = { 0,1 };
-                        hit_entity_index = entity_index;
+                        hit_entity = possible_collider;
                     }
                 }
             }//NOTE: if we have more than one collision we miss all but the last one I guess
-
             entity->pos += pos_delta * closest_t;
-            if (hit_entity_index) {
-                entity->velocity -= 1 * dot(entity->velocity, wall_normal) * wall_normal;//go in line with the wall
+            if (hit_entity) {
                 pos_delta = desired_position - entity->pos;
-                pos_delta -= 1 * dot(pos_delta, wall_normal) * wall_normal;
 
-                game_entity hit_entity = game_st->entities[hit_entity_index]; //TODO(fran): GetEntityIndex function
-                //TODO(fran): check if that entity has any behaviour on collision
+                //NOTE: handmade hero day 68, interesting concept, resolving an n^2 problem (double dispatch) with an n^2 solution
+                
+                bool stops_on_collision = handle_collision(entity, hit_entity);
+
+                if (stops_on_collision) {
+                    entity->velocity -= 1 * dot(entity->velocity, wall_normal) * wall_normal;//go in line with the wall
+                    pos_delta -= 1 * dot(pos_delta, wall_normal) * wall_normal;
+                } //TODO(fran): need the collision table to avoid re-collisions
+                //else {
+                //    add_collision_rule(gs,entity, hit_entity, false); //TODO(fran): why is this necessary, looks bad
+                //}
             }
             else {
                 break;
             }
             //if (closest_t < 1.f) current_level->words[0].velocity = { 0,0 }; //REMEMBER: the biggest problem with the player getting stuck was because we werent cancelling it's previous velocity after a collision
         }
-    }
-    else {
-        entity->pos += pos_delta;
-    }
+    //}
+    //else {
+    //    entity->pos += pos_delta;
+    //}
 }
 
 void game_initialize_entities(game_state* gs, game_level_map lvl) {
@@ -323,67 +472,20 @@ void game_initialize_entities(game_state* gs, game_level_map lvl) {
     }
 }
 
-void move_word(game_entity* word, game_state* game_st, game_input* input) {
-    v2_f32 pos_delta = .5f * word->acceleration * powf(input->dt_sec, 2.f) + word->velocity * input->dt_sec;//NOTE: we'll start just checking a point
-    word->velocity += word->acceleration * input->dt_sec;//TODO: where does this go? //NOTE: Casey put it here, it had it before calculating pos_delta
-    rc e = rc_center_radius(word->pos, word->radius);
-
-    if (word->collides) {
-        f32 closest_t = 1.f; //we limit the time to the full motion that can occur //TODO(fran): shouldnt this two be reset each time through the entity loop?
-        v2_f32 wall_normal{ 0,0 };
-        u32 hit_entity_index = 0;
-        v2_f32 desired_position = word->pos + pos_delta;
-        for (int entity_index = 1; entity_index < arr_count(game_st->entities); entity_index++)//TODO(fran): what to do, always start from 1?
-        {
-            const game_entity* possible_collider = &game_st->entities[entity_index];
-            if (possible_collider->collides && possible_collider != word) {
-                rc collider = rc_center_radius(possible_collider->pos, possible_collider->radius);
-                //Following the Minkowski Sum now we reduce the word(player) to a point and expand every other object(wall) by the size of the word, so with no need to change any of the code we get for free collision detection for the entire shape of the word
-                collider.radius += e.radius;
-                v2_f32 min_collider = collider.center - collider.radius;
-                v2_f32 max_collider = collider.center + collider.radius;
-
-
-                //TODO: mirar dia 52 min 9:47, él NO usa e.center acá sino "Rel" que es igual a e.center-collider.center
-                if (test_wall(min_collider.x, e.center.x, e.center.y, pos_delta.x, pos_delta.y, &closest_t, min_collider.y, max_collider.y)) {
-                    wall_normal = { -1,0 };
-                    hit_entity_index = entity_index;
-                }
-                if (test_wall(max_collider.x, e.center.x, e.center.y, pos_delta.x, pos_delta.y, &closest_t, min_collider.y, max_collider.y)) {
-                    wall_normal = { 1,0 };
-                    hit_entity_index = entity_index;
-                }
-                if (test_wall(min_collider.y, e.center.y, e.center.x, pos_delta.y, pos_delta.x, &closest_t, min_collider.x, max_collider.x)) {
-                    wall_normal = { 0,-1 };
-                    hit_entity_index = entity_index;
-                }
-                if (test_wall(max_collider.y, e.center.y, e.center.x, pos_delta.y, pos_delta.x, &closest_t, min_collider.x, max_collider.x)) {
-                    wall_normal = { 0,1 };
-                    hit_entity_index = entity_index;
-                }
+void clear_collision_rules_for(game_state* gs, game_entity* e) {
+    //TODO(fran): make better data structure that allows for removing of collision rules without searching the entire table
+    for (u32 hash_bucket = 0; hash_bucket < arr_count(gs->collision_rule_hash); hash_bucket++) {
+        for (pairwise_collision_rule** rule = &gs->collision_rule_hash[hash_bucket]; *rule;) {
+            if ((*rule)->a == e || (*rule)->b == e) { 
+                pairwise_collision_rule* removed = *rule;
+                *rule = (*rule)->next_in_hash;
+                removed->next_in_hash = gs->first_free_collision_rule;
+                gs->first_free_collision_rule = removed;
+            }
+            else {
+                rule = &(*rule)->next_in_hash;
             }
         }
-
-        word->pos += pos_delta * closest_t;
-        if (hit_entity_index) {
-            word->velocity -= 2 * dot(word->velocity, wall_normal) * wall_normal;//go in line with the wall
-            pos_delta = desired_position - word->pos;
-            pos_delta -= 2 * dot(pos_delta, wall_normal) * wall_normal;
-
-            game_entity hit_entity = game_st->entities[hit_entity_index]; //TODO(fran): GetEntityIndex function
-            //TODO(fran): check if that entity has any behaviour on collision
-            switch (hit_entity.type) {
-            case entity_wall:
-            {
-                printf("word hit wall\n");
-                word->acceleration = { -1*sign(word->velocity.x)*2,0 }; //TODO(fran): should acceleration always be positive in the direction of the velocity? eg vel is neg accel es pos -> accel to the left, vel is pos accel is pos -> accel to the right?
-                //TODO(fran): destroy flag
-            } break;
-            }
-        }
-    }
-    else {
-        word->pos += pos_delta;
     }
 }
 
@@ -416,6 +518,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
         game_st->word_meters_to_pixels = (f32)game_st->word_height_pixels / game_st->word_height_meters; //Transform from meters to pixels
 
+        game_st->word_pixels_to_meters = 1 / game_st->word_meters_to_pixels;
+
         initialize_arena(&game_st->memory_arena, (u8*)memory->permanent_storage + sizeof(game_state), memory->permanent_storage_sz - sizeof(game_state));
 
         game_st->world.stages = push_mem(&game_st->memory_arena,game_stage);
@@ -438,15 +542,15 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         {
             game_entity level1_wall;
             level1_wall.acceleration = { 0,0 };
-            level1_wall.collides = true;
+            level1_wall.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
             level1_wall.color = { 0.f,1.f,0.f,0.f };
-            level1_wall.pos = { 14.5f * game_st->word_height_meters, 9.5f * game_st->word_height_meters };
+            level1_wall.pos = { 8.f * game_st->word_height_meters, 9.5f * game_st->word_height_meters };
             level1_wall.radius = { .5f * game_st->word_height_meters , 4.5f * game_st->word_height_meters };
             level1_wall.type = entity_wall;
             level1_wall.velocity = { 0,0 };
 
             game_entity level1_player;
-            level1_player.collides = true;
+            level1_player.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
             level1_player.color = { .0f,.0f,.0f,1.0f };
             level1_player.pos = { 11.f * game_st->word_height_meters ,5.f * game_st->word_height_meters };
             level1_player.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
@@ -456,7 +560,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             game_entity level1_word_spawner;
             level1_word_spawner.acceleration = { 0,0 };
             level1_word_spawner.accumulated_time = 0;
-            level1_word_spawner.collides = false;
+            level1_word_spawner.flags = entity_flag_alive;
             level1_word_spawner.color = { 0,0,0.5,0 };
             level1_word_spawner.pos = { 19.5f * game_st->word_height_meters , 10.5f * game_st->word_height_meters };
             level1_word_spawner.radius = { .5f * game_st->word_height_meters, 4.f * game_st->word_height_meters };
@@ -472,7 +576,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         {
             game_entity level2_wall;
             level2_wall.acceleration = { 0,0 };
-            level2_wall.collides = true;
+            level2_wall.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
             level2_wall.color = { 0.f,1.f,0.f,0.f };
             level2_wall.pos = { 8.5f * game_st->word_height_meters, 7.5f * game_st->word_height_meters };
             level2_wall.radius = { .5f * game_st->word_height_meters , 4.5f * game_st->word_height_meters };
@@ -480,7 +584,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             level2_wall.velocity = { 0,0 };
 
             game_entity level2_player;
-            level2_player.collides = true;
+            level2_player.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
             level2_player.color = { .0f,.0f,.0f,1.0f };
             level2_player.pos = { 11.f * game_st->word_height_meters ,5.f * game_st->word_height_meters };
             level2_player.radius = { .75f * game_st->word_height_meters, .75f * game_st->word_height_meters };
@@ -490,7 +594,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             game_entity level2_word_spawner;
             level2_word_spawner.acceleration = { 0,0 };
             level2_word_spawner.accumulated_time = 0;
-            level2_word_spawner.collides = false;
+            level2_word_spawner.flags = entity_flag_alive;
             level2_word_spawner.color = { 0,0,0.5f,0 };
             level2_word_spawner.pos = { 16.5f * game_st->word_height_meters , 10.5f * game_st->word_height_meters };
             level2_word_spawner.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
@@ -566,7 +670,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         case entity_wall: break;
         case entity_word: 
         {
-            move_word(&game_st->entities[entity_index],game_st,input);
+            move_entity(&game_st->entities[entity_index], {0,0}, game_st, input);
+            //move_word(&game_st->entities[entity_index],game_st,input);
             //TODO(fran): move the word
         } break;
         case entity_word_spawner:
@@ -577,9 +682,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
                 spawner_entity.accumulated_time = 0;
 
                 game_entity word;
-                word.collides = true;
+                word.flags = entity_flag_collides | entity_flag_alive;
                 word.color = { get_random_0_1(),get_random_0_1() ,get_random_0_1() ,get_random_0_1() };
-                word.pos = { spawner_entity.pos.x - spawner_entity.radius.x + get_random_0_1() * ((spawner_entity.pos.x + spawner_entity.radius.x) - (spawner_entity.pos.x - spawner_entity.radius.x)),spawner_entity.pos.y - spawner_entity.radius.y + get_random_0_1() * ((spawner_entity.pos.y + spawner_entity.radius.y) - (spawner_entity.pos.y - spawner_entity.radius.y)) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point
+                word.pos = { lerp(spawner_entity.pos.x - spawner_entity.radius.x,spawner_entity.pos.x + spawner_entity.radius.x, get_random_0_1()),lerp(spawner_entity.pos.y - spawner_entity.radius.y,spawner_entity.pos.y + spawner_entity.radius.y, get_random_0_1()) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point
                 word.radius = { .5f * game_st->word_height_meters, .5f * game_st->word_height_meters };
                 word.velocity = v2_f32{ -1,0 }*(5 * game_st->word_height_meters) * get_random_0_1();
                 word.type = entity_word;
@@ -602,17 +707,42 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     game_render_img(frame_buf, { 0,(f32)frame_buf->height - game_st->DEBUG_menu.height }, &game_st->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
+    
 
     //Render Loop, TODO(fran): separate by entity type
-    for (u32 i = 1; i < game_st->entity_count; i++) { //TODO: again 1 or 0
+    for (u32 i = 1; i < game_st->entity_count; i++) {
         const game_entity* e = &game_st->entities[i];
-        game_render_rectangle(
+        game_render_rectangle( //TODO(fran): change to render_bounding_box (just the borders)
             frame_buf, 
             transform_to_screen_coords({ e->pos , e->radius }, game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels), 
             e->color);
+        switch (e->type) {
+        case entity_word:
+        {
+            stbtt_fontinfo font;
+            int width, height, c = 'a';
+            platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); //TODO(fran): fonts folder inside /assets
+            stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
+            u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), c, &width, &height, 0, 0);
+            render_char(frame_buf, 
+                transform_to_screen_coords(rc_center_radius( e->pos , v2_f32{(f32)width/2.f,(f32)height/2.f}*game_st->word_pixels_to_meters), 
+                    game_st->word_meters_to_pixels, game_st->camera, game_st->lower_left_pixels), bitmap, width, height);
+            platform_free_file_memory(f.mem);
+            stbtt_FreeBitmap(bitmap, 0);
+        } break;
+        }
     }
 
     game_render_img(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &game_st->DEBUG_mouse);
+
+    //Deletion Loop
+    for (u32 i = 1; i < game_st->entity_count; i++) {
+        if (!is_set(&game_st->entities[i], entity_flag_alive)) { //TODO(fran): would a destroy flag be better? so you dont have to set alive on each entity creation
+            clear_collision_rules_for(game_st, &game_st->entities[i]);//NOTE: I dont really know if the collision rule idea will be useful for the simple game im making right now, but it looks like an interesting concept to understand so I'm doing it anyway to learn
+            game_remove_entity(game_st, i);
+        }
+    }
+
 }
 
 //TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting

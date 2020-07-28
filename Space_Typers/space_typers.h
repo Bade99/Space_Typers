@@ -6,6 +6,7 @@
 #include <math.h> //sinf
 
 #include "space_typers_img.h"
+#include "space_typers_font.h"
 
 #include "space_typers_math.h"
 
@@ -102,13 +103,20 @@ enum game_entity_type {
     entity_word_spawner
 };
 
+enum game_entity_flags {
+    entity_flag_collides = (1 << 1), //does collision detection
+    entity_flag_alive = (1 << 2), //NOTE: non alive entities are removed at the end of each frame
+    entity_flag_solid = (1<<3), //acts as a collider for other objects
+};
+
+
 struct game_entity {
     v2_f32 pos;
     v2_f32 radius;
     argb_f32 color;
     v2_f32 velocity;
     v2_f32 acceleration; //TODO: apply to every entity
-    bool collides;
+    u32 flags;
     //utf16 txt[25];
     //TODO(fran): add enum for entity type?
     game_entity_type type;
@@ -117,6 +125,20 @@ struct game_entity {
     f32 accumulated_time;
     f32 time_till_next_word_sec;
 };
+
+//NOTE REMEMBER: you cant check for multiple flags set at the same time, eg a|b|c will return true if any single one is set, not only if all are
+bool is_set(const game_entity* e, u32 flags) {
+    bool res = e->flags & flags;
+    return res;
+}
+
+void add_flag(game_entity* e, u32 flags) {
+    e->flags |= flags;
+}
+
+void clear_flag(game_entity* e, u32 flags) {
+    e->flags &= ~flags;
+}
 
 struct game_level_map {
     game_entity* entities;
@@ -158,7 +180,13 @@ struct game_world{
     u32 current_stage;
 };
 
+struct pairwise_collision_rule {
+    game_entity* a;
+    game_entity* b; //TODO(fran): having straight pointers is probably a problem, maybe better is having indexes into the entity table or some global always incrementing index
+    bool should_collide;
 
+    pairwise_collision_rule* next_in_hash;
+};
 
 struct game_state {
     //int xoff;
@@ -167,6 +195,7 @@ struct game_state {
     f32 word_height_meters;
     i32 word_height_pixels;
     f32 word_meters_to_pixels;
+    f32 word_pixels_to_meters;
     v2_f32 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena memory_arena;
@@ -176,9 +205,15 @@ struct game_state {
     img DEBUG_mouse;
 
     v2_f32 camera;
-
+#ifdef _DEBUG
+    game_entity entities[256];
+#else
     game_entity entities[20];
+#endif
     u32 entity_count;
+
+    pairwise_collision_rule* collision_rule_hash[256]; //NOTE: must be a power of 2
+    pairwise_collision_rule* first_free_collision_rule; //NOTE: free store from previously deleted collision rules
 };
 
 //TODO(fran): check what casey said about adding static to functions to reduce link/compilation time (explanation in day 53, min ~1:05:00)

@@ -27,13 +27,19 @@
     <ClInclude Include="space_typers_img.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="space_typers_vectors.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="space_typers_platform.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="space_typers_math.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="space_typers_font.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_truetype.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="space_typers_vector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
