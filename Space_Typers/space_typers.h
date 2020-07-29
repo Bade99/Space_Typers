@@ -8,6 +8,8 @@
 #include "space_typers_img.h"
 #include "space_typers_font.h"
 
+#include "space_typers_rectangle.h"
+
 #include "space_typers_math.h"
 
 #if _DEBUG //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
@@ -17,13 +19,6 @@
 #endif
 
 #define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
-
-f32 minimum(f32 a, f32 b) { //TODO(fran): create math .h file or similar
-    return a < b ? a : b;
-}
-f32 maximum(f32 a, f32 b) { 
-    return a > b ? a : b;
-}
 
 struct argb_f32 { f32 a, r, g, b; };
 
@@ -44,46 +39,7 @@ struct img {
 //    int width, height;
 //};
 
-struct rc {
-    v2_f32 center;
-    v2_f32 radius;
 
-    v2_f32 get_min() {
-        v2_f32 res = center - radius;
-        return res;
-    }
-
-    v2_f32 get_max() {
-        v2_f32 res = center + radius;
-        return res;
-    }
-};
-
-rc rc_min_max(v2_f32 min, v2_f32 max) { //NOTE REMEMBER: I like this idea
-    rc res;
-    res.center = (max + min) / 2.f;
-    res.radius = (max - min) / 2.f;
-    return res;
-}
-
-rc rc_center_radius(v2_f32 center, v2_f32 radius) {
-    rc res;
-    res.center = center;
-    res.radius = radius;
-    return res;
-}
-
-bool is_in_rc(v2_f32 p, rc r) {
-    //NOTE: we dont include the final coordinate point
-    bool res = p.x >= r.get_min().x && p.x < r.get_max().x && p.y >= r.get_min().y && p.y < r.get_max().y;
-    return res;
-}
-
-struct colored_rc {
-    rc rect;
-    argb_f32 color;
-    v2_f32 velocity;
-};
 
 //struct game_state_TODO {
 //    float accumulated_time;
@@ -107,12 +63,24 @@ enum game_entity_flags {
     entity_flag_collides = (1 << 1), //does collision detection
     entity_flag_alive = (1 << 2), //NOTE: non alive entities are removed at the end of each frame
     entity_flag_solid = (1<<3), //acts as a collider for other objects
+    //TODO(fran): add moveable flag?
 };
 
+struct game_entity_collision_area {
+    v2_f32 offset; //NOTE: offset from entity pos
+    v2_f32 radius;
+};
+
+struct game_entity_collision_area_group {
+    game_entity_collision_area total_area;
+    game_entity_collision_area* areas;
+    u32 area_count;
+};
 
 struct game_entity {
     v2_f32 pos;
-    v2_f32 radius;
+    //v2_f32 radius;
+    game_entity_collision_area_group collision;
     argb_f32 color;
     v2_f32 velocity;
     v2_f32 acceleration; //TODO: apply to every entity
@@ -122,21 +90,21 @@ struct game_entity {
     game_entity_type type;
 
     //Word spawner
-    f32 accumulated_time;
+    f32 accumulated_time_sec;
     f32 time_till_next_word_sec;
 };
 
 //NOTE REMEMBER: you cant check for multiple flags set at the same time, eg a|b|c will return true if any single one is set, not only if all are
-bool is_set(const game_entity* e, u32 flags) {
-    bool res = e->flags & flags;
+bool is_set(const game_entity* e, u32 flag) {
+    bool res = e->flags & flag;
     return res;
 }
 
-void add_flag(game_entity* e, u32 flags) {
+void add_flags(game_entity* e, u32 flags) {
     e->flags |= flags;
 }
 
-void clear_flag(game_entity* e, u32 flags) {
+void clear_flags(game_entity* e, u32 flags) {
     e->flags &= ~flags;
 }
 
@@ -172,7 +140,7 @@ void* _push_mem(game_memory_arena* arena, u32 sz) {
 
 #define push_mem(arena,type) (type*)_push_mem(arena,sizeof(type))
 
-#define push_arr(arena,type,sz) (type*)_push_mem(arena,sizeof(type)*sz)
+#define push_arr(arena,type,count) (type*)_push_mem(arena,sizeof(type)*count)
 
 struct game_world{
     game_stage* stages;
@@ -180,10 +148,11 @@ struct game_world{
     u32 current_stage;
 };
 
+
 struct pairwise_collision_rule {
     game_entity* a;
     game_entity* b; //TODO(fran): having straight pointers is probably a problem, maybe better is having indexes into the entity table or some global always incrementing index
-    bool should_collide;
+    bool can_collide;
 
     pairwise_collision_rule* next_in_hash;
 };
