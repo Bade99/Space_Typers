@@ -591,8 +591,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
         game_framebuffer game_frame_buf; //INFO: Construís el objeto genérico a partir del tuyo específico
-        game_frame_buf.bytes = frame_backbuffer.bytes;
-        game_frame_buf.bytes_per_pixel = frame_backbuffer.bytes_per_pixel;
+        game_frame_buf.mem = frame_backbuffer.bytes;
+        //game_frame_buf.bytes_per_pixel = frame_backbuffer.bytes_per_pixel;
         game_frame_buf.height = frame_backbuffer.height;
         game_frame_buf.width = frame_backbuffer.width;
         game_frame_buf.pitch = frame_backbuffer.pitch;

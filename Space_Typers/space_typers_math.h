@@ -8,7 +8,9 @@ f32 sign(f32 n) {
 	return res;
 }
 
-f32 get_random_0_1() {
+
+//TODO(fran): once we have a centralized random series generator send that to each function and create seed() function (see handmade day 82)
+f32 random_unilateral() { //NOTE: random from [0,1]
 	//TODO(fran): xorshift + handamde day 434 / ray 02
 	std::chrono::system_clock::rep seed = std::chrono::system_clock::now().time_since_epoch().count();
 	static std::mt19937 generator((unsigned int)seed);
@@ -16,14 +18,46 @@ f32 get_random_0_1() {
 	return (f32)distribution(generator);
 }
 
+f32 random_bilateral() { //NOTE: random from [-1,1] //NOTE I would prefer random_-1_1 but that syntax is not valid
+	//TODO(fran): xorshift + handamde day 434 / ray 02
+	std::chrono::system_clock::rep seed = std::chrono::system_clock::now().time_since_epoch().count();
+	static std::mt19937 generator((unsigned int)seed);
+	std::uniform_real_distribution<> distribution{ -1.f,1.f };
+	return (f32)distribution(generator);
+}
+
+f32 random_between(f32 min, f32 max) { //NOTE: random between user specified range [min,max]
+	//TODO(fran): xorshift + handamde day 434 / ray 02
+	std::chrono::system_clock::rep seed = std::chrono::system_clock::now().time_since_epoch().count();
+	static std::mt19937 generator((unsigned int)seed);
+	std::uniform_real_distribution<> distribution{ min,max };
+	return (f32)distribution(generator);
+}
+
+i32 random_between(i32 min, i32 max) { //NOTE: random integer between user specified range [min,max]
+	//TODO(fran): xorshift + handamde day 434 / ray 02
+	std::chrono::system_clock::rep seed = std::chrono::system_clock::now().time_since_epoch().count();
+	static std::mt19937 generator((unsigned int)seed);
+	std::uniform_int_distribution<> distribution{ min,max };
+	return distribution(generator);
+}
+
+u32 random_count(u32 choice_count) { //produces a random integer between [0,choice_count-1]
+	//TODO(fran): xorshift + handamde day 434 / ray 02
+	std::chrono::system_clock::rep seed = std::chrono::system_clock::now().time_since_epoch().count();
+	static std::mt19937 generator((unsigned int)seed);
+	std::uniform_int_distribution<> distribution{ 0,(i32)(choice_count-1) }; //TODO(fran): I feel this could be problematic
+	return distribution(generator);
+}
+
 f32 lerp(f32 n1, f32 n2, f32 t) { //TODO(fran): put t as the middle param?
 	//NOTE: interesting that https://en.wikipedia.org/wiki/Linear_interpolation mentions this is the Precise method
-	return (1 - t) * n1 + t * n2;
+	return (1.f - t) * n1 + t * n2;
 }
 
 v2_f32 lerp(v2_f32 n1, v2_f32 n2, f32 t) {
 	//NOTE: interesting that https://en.wikipedia.org/wiki/Linear_interpolation mentions this is the Precise method
-	return (1 - t) * n1 + t * n2;
+	return (1.f - t) * n1 + t * n2;
 }
 
 v2_f32 hadamard(v2_f32 v1, v2_f32 v2) {
@@ -71,4 +105,17 @@ f32 clamp(f32 min, f32 n, f32 max) {
 
 f32 clamp01(f32 n) {
 	return clamp(0.f, n, 1.f);
+}
+
+i32 round_f32_to_i32(f32 n) {
+	//TODO(fran): intrinsic
+	i32 res = (i32)(n + .5f); //TODO(fran): does this work correctly with negative numbers?
+	return res;
+}
+
+u32 round_f32_to_u32(f32 n) {
+	game_assert(n >= 0.f);
+	//TODO(fran): intrinsic
+	u32 res = (u32)(n + .5f);
+	return res;
 }

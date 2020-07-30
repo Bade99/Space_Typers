@@ -2,6 +2,12 @@
 
 #include "space_typers_platform.h"
 
+#if _DEBUG //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
+#define game_assert(expression) if(!(expression)){*(int*)0=0;}
+#else
+#define game_assert(expression) 
+#endif
+
 #define _USE_MATH_DEFINES //M_PI
 #include <math.h> //sinf
 
@@ -12,20 +18,18 @@
 
 #include "space_typers_math.h"
 
-#if _DEBUG //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
-#define game_assert(expression) if(!(expression)){*(int*)0=0;}
-#else
-#define game_assert(expression) 
-#endif
 
 #define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
 
 struct argb_f32 { f32 a, r, g, b; };
 
 
+#define IMG_BYTES_PER_PIXEL 4 //NOTE: there's one byte for each channel
+#define IMG_CHANNELS 4 //NOTE: all images are loaded and stored in rgba (maybe not that order)
 struct img {
-    int width, height, channels, bytes_per_channel;
-    //v2_i32 align; //TODO(fran): add align offset to change the position of the bitmap relative to a point (Handmade hero day 39)
+    i32 width;
+    i32 height;
+    i32 pitch;
     void* mem;
 };
 
@@ -92,6 +96,9 @@ struct game_entity {
     //Word spawner
     f32 accumulated_time_sec;
     f32 time_till_next_word_sec;
+
+    //v2_i32 align; //TODO(fran): add align offset to change the position of the bitmap relative to a point (Handmade hero day 39)
+
 };
 
 //NOTE REMEMBER: you cant check for multiple flags set at the same time, eg a|b|c will return true if any single one is set, not only if all are
@@ -138,7 +145,7 @@ void* _push_mem(game_memory_arena* arena, u32 sz) {
     return res;
 } //TODO(fran): set mem to zero? (not really necessary since we request the mem to be cleared to zero)
 
-#define push_mem(arena,type) (type*)_push_mem(arena,sizeof(type))
+#define push_type(arena,type) (type*)_push_mem(arena,sizeof(type))
 
 #define push_arr(arena,type,count) (type*)_push_mem(arena,sizeof(type)*count)
 

@@ -5,19 +5,6 @@
 //·optimization (google) intel intrinsics guide
 
 
-//void game_render(game_framebuffer* buf, int xoff, int yoff) {
-//    u8* row = (u8*)buf->bytes;
-//    int pitch = buf->width * buf->bytes_per_pixel;
-//    for (int y = 0; y < buf->height; y++) {
-//        u32* pixel = (u32*)row;
-//        for (int x = 0; x < buf->width; x++) {
-//            //AARRGGBB
-//            *pixel++ = ((u8)(y + yoff) << 8) | (u8)(x + xoff);
-//        }
-//        row += pitch;//he does this instead of just incrementing each time in the x loop because of alignment things I dont care about now
-//    }
-//}
-
 //void game_output_sound(game_soundbuffer* sound_buf, int hz) {
 //    static f32 sine_t = 0;
 //    int volume = 3000;
@@ -42,26 +29,6 @@ void game_get_sound_samples(game_memory* memory, game_soundbuffer* sound_buf) {
     //game_output_sound(sound_buf, game_st->hz);
 }
 
-//void game_render_rectangle(game_framebuffer* buf, v2_i32 pos, v2_i32 sz, u32 color) {
-//    if (pos.x + sz.x > buf->width || pos.x<0 || pos.y + sz.y>buf->height || pos.y < 0) return;
-//    u8* row = (u8*)buf->bytes;
-//    row += pos.y * buf->pitch + pos.x*buf->bytes_per_pixel;
-//    for (int y = 0; y < sz.y; y++) {
-//        u32* pixel = (u32*)row;
-//        for (int x = 0; x < sz.x; x++) {
-//            //AARRGGBB
-//            *pixel++ = color;
-//        }
-//        row += buf->pitch;//he does this instead of just incrementing each time in the x loop because of alignment things I dont care about now
-//    }
-//}
-
-i32 round_f32_to_i32(f32 n) {
-    //TODO(fran): intrinsic
-    i32 res = (i32)(n+.5f); //TODO(fran): does this work correctly with negative numbers?
-    return res;
-}
-
 //bool game_check_collision_point_to_rc(v2_f32 p, rc r) {
 //    return p.x > (r.center.x-r.radius.x)&& p.x < (r.center.x + r.radius.x) && p.y >(r.center.y - r.radius.y) && p.y < (r.center.y + r.radius.y);
 //}
@@ -70,27 +37,40 @@ img DEBUG_load_png(const char* filename) {
     img res{0};
     auto [img_mem, img_sz] = platform_read_entire_file(filename);
     if (img_mem) {
-        //platform_write_entire_file("C:/Users/Brenda-Vero-Frank/Desktop/testfile.txt",background_bmp_mem,background_bmp_sz);
         int width, height, channels;
         u8* bytes = stbi_load_from_memory((u8*)img_mem, img_sz, &width, &height, &channels, 0); //NOTE: this interface always assumes 8 bits per component
+        //TODO(fran): the memory for the image should be taken from the arena
         platform_free_file_memory(img_mem);
         if (bytes) {
             game_assert(channels == 4);
             res.mem = bytes;
             res.width = width;
             res.height = height;
-            res.channels = channels;
-            res.bytes_per_channel = 1; //NOTE: this interface always assumes 8 bits per component
+            res.pitch = width * IMG_BYTES_PER_PIXEL;
+            //res.channels = channels;
+            //res.bytes_per_channel = 1; //NOTE: this interface always assumes 8 bits per component
+
+            //NOTE: for premultiplied alpha to work we need to convert all our images to that "format", therefore this changes too
 
             u8* img_row = (u8*)res.mem; //INFO: R and B values need to be swapped
-            int img_pitch = res.width * res.channels * res.bytes_per_channel;
             for (int y = 0; y < res.height; y++) {
                 u32* img_pixel = (u32*)img_row;
                 for (int x = 0; x < res.width; x++) {
+
+                    f32 r = (f32)((*img_pixel & 0x000000FF)>>0);
+                    f32 g = (f32)((*img_pixel & 0x0000FF00)>>8);
+                    f32 b = (f32)((*img_pixel & 0x00FF0000)>>16);
+                    f32 a = (f32)((*img_pixel & 0xFF000000)>>24);//TODO(fran): I can just do >>24, check that it puts 0 in the bits left behind and not 1 (when most signif bit is 1)
+                    f32 a_n = a / 255.f;
+
+                    r = r * a_n; //premultiplying
+                    g = g * a_n; //premultiplying
+                    b = b * a_n; //premultiplying
+
                     //AARRGGBB
-                    *img_pixel++ = (*img_pixel & 0xFF00FF00) | ((*img_pixel & 0x00FF0000)>>16) | ((*img_pixel & 0x000000FF) << 16); //TODO(fran): learn more about this, there are probably simpler and better ways to do it
+                    *img_pixel++ = round_f32_to_u32(a) << 24 | round_f32_to_u32(r) << 16 | round_f32_to_u32(g) << 8 | round_f32_to_u32(b) << 0;
                 }
-                img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+                img_row += res.pitch; 
             }
             //TODO(fran): get align x and y
 
@@ -100,11 +80,11 @@ img DEBUG_load_png(const char* filename) {
 }
 
 void DEBUG_unload_png(img* image) {
-    stbi_image_free(image->mem);
+    stbi_image_free(image->mem); //TODO(fran): use the memory arena
     //TODO(fran): zero the other members?
 }
 
-void game_render_img_ignore_transparency(game_framebuffer* buf, v2_f32 pos, img* image) {
+void game_render_img_ignore_transparency(img* buf, v2_f32 pos, img* image) {
 
     v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
     v2_i32 max = { round_f32_to_i32(pos.x + image->width), round_f32_to_i32(pos.y + image->height) };
@@ -117,10 +97,9 @@ void game_render_img_ignore_transparency(game_framebuffer* buf, v2_f32 pos, img*
     if (max.x > buf->width)max.x = buf->width;
     if (max.y > buf->height)max.y = buf->height;
 
-    int img_pitch = image->width * image->channels * image->bytes_per_channel;
 
-    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
-    u8* img_row = (u8*)image->mem + offset_x * image->channels * image->bytes_per_channel + offset_y * img_pitch;
+    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
+    u8* img_row = (u8*)image->mem + offset_x * IMG_BYTES_PER_PIXEL + offset_y * image->pitch;
 
     for (int y = min.y; y < max.y; y++) {
         u32* pixel = (u32*)row;
@@ -130,12 +109,14 @@ void game_render_img_ignore_transparency(game_framebuffer* buf, v2_f32 pos, img*
             *pixel++ = *img_pixel++;
         }
         row += buf->pitch;
-        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+        img_row += image->pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
     }
 
 }
 
-void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
+void game_render_img(img* buf, v2_f32 pos, img* image,f32 dimming=1.f) { //NOTE: interesting idea: the thing that we read from and the thing that we write to are handled symmetrically (img-img)
+
+    game_assert(dimming >= 0.f && dimming <= 1.f);
 
     v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
     v2_i32 max = { round_f32_to_i32(pos.x+ image->width), round_f32_to_i32(pos.y+ image->height) };
@@ -148,10 +129,8 @@ void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
     if (max.x > buf->width)max.x = buf->width;
     if (max.y > buf->height)max.y = buf->height;
 
-    int img_pitch = image->width * image->channels * image->bytes_per_channel;
-
-    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
-    u8* img_row = (u8*)image->mem + offset_x* image->channels* image->bytes_per_channel + offset_y*img_pitch ;
+    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
+    u8* img_row = (u8*)image->mem + offset_x* IMG_BYTES_PER_PIXEL + offset_y*image->pitch;
     
     for (int y = min.y; y < max.y; y++) {
         u32* pixel = (u32*)row;
@@ -160,26 +139,37 @@ void game_render_img(game_framebuffer* buf, v2_f32 pos, img* image) {
             //AARRGGBB
 
             //very slow linear blend
-            f32 s_a = (f32)((*img_pixel >> 24) & 0xFF) / 255.f; //source
-            f32 s_r = (f32)((*img_pixel >> 16) & 0xFF);
-            f32 s_g = (f32)((*img_pixel >> 8) & 0xFF);
-            f32 s_b = (f32)((*img_pixel >> 0) & 0xFF);
+            f32 s_a = (f32)((*img_pixel >> 24) & 0xFF); //source
+            f32 s_r = dimming * (f32)((*img_pixel >> 16) & 0xFF); //NOTE: dimming also has to premultiply
+            f32 s_g = dimming * (f32)((*img_pixel >> 8) & 0xFF);
+            f32 s_b = dimming * (f32)((*img_pixel >> 0) & 0xFF);
 
-            f32 d_r = (f32)((*pixel >> 16) & 0xFF); //dest
+            f32 r_s_a = (s_a / 255.f)* dimming; //TODO(fran): add extra alpha reduction for every pixel CAlpha (handmade)
+
+            f32 d_a = (f32)((*pixel >> 24) & 0xFF); //dest
+            f32 d_r = (f32)((*pixel >> 16) & 0xFF); 
             f32 d_g = (f32)((*pixel >> 8) & 0xFF);
             f32 d_b = (f32)((*pixel >> 0) & 0xFF);
 
-            f32 r = (1.f - s_a) * d_r + s_a * s_r; //TODO(fran): what if the dest had an alpha different from 255?
-            f32 g = (1.f - s_a) * d_g + s_a * s_g;
-            f32 b = (1.f - s_a) * d_b + s_a * s_b;
+            f32 r_d_a = d_a / 255.f;
 
-            *pixel = 0xFF<<24 | round_f32_to_i32(r)<<16 | round_f32_to_i32(g)<<8 | round_f32_to_i32(b)<<0;
+            //REMEMBER: handmade day 83, finally understanding what premultiplied alpha is and what it is used for
+
+            //TODO(fran): look at sean barrett's article on premultiplied alpha, remember: "non premultiplied alpha does not distribute over linear interpolation"
+
+            f32 rem_r_s_a = (1.f - r_s_a); //remaining alpha
+            f32 a = 255.f*(r_s_a + r_d_a - r_s_a*r_d_a ); //final premultiplication step (handmade day 83 min 1:23:00)
+            f32 r = rem_r_s_a * d_r + s_r;//NOTE: before premultiplied alpha we did f32 r = rem_r_s_a * d_r + r_s_a * s_r; now we dont need to multiply the source, it already comes premultiplied
+            f32 g = rem_r_s_a * d_g + s_g;
+            f32 b = rem_r_s_a * d_b + s_b;
+
+            *pixel = round_f32_to_i32(a)<<24 | round_f32_to_i32(r)<<16 | round_f32_to_i32(g)<<8 | round_f32_to_i32(b)<<0; //TODO(fran): should use round_f32_to_u32?
 
             pixel++;
             img_pixel++;
         }
         row += buf->pitch;
-        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+        img_row += image->pitch; //NOTE: now Im starting to see the benefits of using pitch, very easy to change rows when you only have to display parts of the img
     }
 
 }
@@ -203,7 +193,7 @@ min_max_v2_f32 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels,
     return { min_pixels_camera_screen , max_pixels_camera_screen };
 }
 
-void render_char(game_framebuffer* buf, min_max_v2_f32 min_max, u8* bmp, int width, int height) {
+void render_char(img* buf, min_max_v2_f32 min_max, u8* bmp, int width, int height) { //TODO(fran): premultiplied alpha? and generalize img to img operation
     //NOTE: stb creates top down img with 1 byte per pixel
     v2_i32 min = { round_f32_to_i32(min_max.min.x), round_f32_to_i32(min_max.min.y) };
     v2_i32 max = { round_f32_to_i32(min_max.max.x), round_f32_to_i32(min_max.max.y) };
@@ -218,7 +208,7 @@ void render_char(game_framebuffer* buf, min_max_v2_f32 min_max, u8* bmp, int wid
 
     int img_pitch = width;
 
-    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
+    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
     u8* img_row = bmp + offset_x + offset_y * img_pitch;
 
     f32 color_r = 255.f;
@@ -251,11 +241,11 @@ void render_char(game_framebuffer* buf, min_max_v2_f32 min_max, u8* bmp, int wid
             img_pixel++;
         }
         row += buf->pitch;
-        img_row += img_pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
+        img_row += img_pitch; 
     }
 }
 
-void game_render_rectangle(game_framebuffer* buf, min_max_v2_f32 min_max, argb_f32 colorf) {
+void game_render_rectangle(img* buf, min_max_v2_f32 min_max, argb_f32 colorf) {
     //The Rectangles are filled NOT including the final row/column
     v2_i32 min = { round_f32_to_i32(min_max.min.x), round_f32_to_i32(min_max.min.y) };
     v2_i32 max = { round_f32_to_i32(min_max.max.x), round_f32_to_i32(min_max.max.y) };
@@ -270,7 +260,7 @@ void game_render_rectangle(game_framebuffer* buf, min_max_v2_f32 min_max, argb_f
         (round_f32_to_i32(colorf.g * 255.f) << 8) |
         round_f32_to_i32(colorf.b * 255.f);
 
-    u8* row = (u8*)buf->bytes + min.y * buf->pitch + min.x * buf->bytes_per_pixel;
+    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
     for (int y = min.y; y < max.y; y++) {
         u32* pixel = (u32*)row;
         for (int x = min.x; x < max.x; x++) {
@@ -341,7 +331,7 @@ void add_collision_rule(game_state* gs, game_entity* A, game_entity* B, bool can
             gs->first_free_collision_rule = gs->first_free_collision_rule->next_in_hash;
         }
         else {
-            found = push_mem(&gs->memory_arena, pairwise_collision_rule);
+            found = push_type(&gs->memory_arena, pairwise_collision_rule);
         }
         found->next_in_hash = gs->collision_rule_hash[hash_bucket];
         gs->collision_rule_hash[hash_bucket] = found;
@@ -623,6 +613,24 @@ game_entity create_word(game_memory_arena* arena, v2_f32 pos, v2_f32 radius, v2_
     return word;
 }
 
+#define zero_struct(instance) zero_mem(&(instance),sizeof(instance))
+void zero_mem(void* ptr, u32 sz) {
+    //TODO(fran): performance
+    u8* bytes = (u8*)ptr;
+    while (sz--)
+        *bytes++ = 0;
+}
+
+img make_empty_img(game_memory_arena* arena,u32 width, u32 height) {//TODO(fran): should allow for negative sizes?
+    img res;
+    res.width = width;
+    res.height = height;
+    res.pitch = width * IMG_BYTES_PER_PIXEL;
+    res.mem = _push_mem(arena, width * height * IMG_BYTES_PER_PIXEL);
+    zero_mem(res.mem, width * height * IMG_BYTES_PER_PIXEL);
+    return res;
+}
+
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
     
     //BIG TODO(fran): game_add_entity can no longer copy the game_entity, that would mean it uses the collision areas stored in the saved entity (it's fine for now, until we need to apply some transformation to collision areas)
@@ -659,7 +667,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
         initialize_arena(&gs->memory_arena, (u8*)memory->permanent_storage + sizeof(game_state), memory->permanent_storage_sz - sizeof(game_state));
 
-        gs->world.stages = push_mem(&gs->memory_arena,game_stage);
+        gs->world.stages = push_type(&gs->memory_arena,game_stage);
         gs->world.stage_count = 1;
         gs->world.current_stage = 0;
 
@@ -772,9 +780,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             spawner_entity.accumulated_time_sec += input->dt_sec;
             if (spawner_entity.accumulated_time_sec > spawner_entity.time_till_next_word_sec) {
                 spawner_entity.accumulated_time_sec = 0;
-                v2_f32 pos = { lerp(spawner_entity.pos.x + spawner_entity.collision.total_area.offset.x - spawner_entity.collision.total_area.radius.x,spawner_entity.pos.x + spawner_entity.collision.total_area.offset.x + spawner_entity.collision.total_area.radius.x, get_random_0_1()),lerp(spawner_entity.pos.y + spawner_entity.collision.total_area.offset.y - spawner_entity.collision.total_area.radius.y,spawner_entity.pos.y + spawner_entity.collision.total_area.offset.y + spawner_entity.collision.total_area.radius.y, get_random_0_1()) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point //TODO(fran): pick one of the collision areas and spawn from there, or maybe better to just say we use only one for this guy, since it also needs to generate the direction of the word, and then we'd need to store different directions
+                v2_f32 pos = { lerp(spawner_entity.pos.x + spawner_entity.collision.total_area.offset.x - spawner_entity.collision.total_area.radius.x,spawner_entity.pos.x + spawner_entity.collision.total_area.offset.x + spawner_entity.collision.total_area.radius.x, random_unilateral()),lerp(spawner_entity.pos.y + spawner_entity.collision.total_area.offset.y - spawner_entity.collision.total_area.radius.y,spawner_entity.pos.y + spawner_entity.collision.total_area.offset.y + spawner_entity.collision.total_area.radius.y, random_unilateral()) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point //TODO(fran): pick one of the collision areas and spawn from there, or maybe better to just say we use only one for this guy, since it also needs to generate the direction of the word, and then we'd need to store different directions
                 
-                game_entity word = create_word(&gs->memory_arena,pos, v2_f32{ .5f , .5f  }*gs->word_height_meters, v2_f32{ -1,0 }*(5 * gs->word_height_meters)* get_random_0_1(), { get_random_0_1(),get_random_0_1() ,get_random_0_1() ,get_random_0_1() });
+                game_entity word = create_word(&gs->memory_arena,pos, v2_f32{ .5f , .5f  }*gs->word_height_meters, v2_f32{ -1,0 }*(5 * gs->word_height_meters)* random_unilateral(), { random_unilateral(),random_unilateral() ,random_unilateral() ,random_unilateral() });
                 
                 game_add_entity(gs, &word);
 
@@ -785,12 +793,21 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         }
     }
 
-    //game_render_rectangle(frame_buf, { { (f32)0,(f32)0 }, { (f32)frame_buf->width,(f32)frame_buf->height } }, { 0,.5f,0.f,.5f });
     //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
 
-    game_render_img_ignore_transparency(frame_buf, { (f32)frame_buf->width/2 - gs->DEBUG_background.width / 2,(f32)frame_buf->height/2 - gs->DEBUG_background.height/2 } , &gs->DEBUG_background);
+    img framebuffer;
+    framebuffer.height = frame_buf->height;
+    framebuffer.width = frame_buf->width;
+    framebuffer.mem = frame_buf->mem;
+    framebuffer.pitch = frame_buf->pitch;
+
+#if _DEBUG
+    game_render_rectangle(&framebuffer, { { (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height } }, { 0,1.f,0.f,1.f });
+#endif
+
+    game_render_img_ignore_transparency(&framebuffer, { (f32)framebuffer.width/2 - gs->DEBUG_background.width / 2,(f32)framebuffer.height/2 - gs->DEBUG_background.height/2 } , &gs->DEBUG_background);
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
-    game_render_img(frame_buf, { 0,(f32)frame_buf->height - gs->DEBUG_menu.height }, &gs->DEBUG_menu); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
+    game_render_img(&framebuffer, { 0,(f32)framebuffer.height - gs->DEBUG_menu.height }, &gs->DEBUG_menu,.5f); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
@@ -799,18 +816,18 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     for (u32 i = 1; i < gs->entity_count; i++) {
         const game_entity* e = &gs->entities[i];
         game_render_rectangle( //TODO(fran): change to render_bounding_box (just the borders)
-            frame_buf, 
+            &framebuffer,
             transform_to_screen_coords({ e->pos + e->collision.total_area.offset , e->collision.total_area.radius }, gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels),
             e->color); //TODO(fran): iterate over all collision areas and render each one
         switch (e->type) {
         case entity_word:
         {
             stbtt_fontinfo font;
-            int width, height, c = 'a';
+            int width, height; char alphabet[] = "abcdefghijklmnopqrstuvwxyz";
             platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); //TODO(fran): fonts folder inside /assets
             stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
-            u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), c, &width, &height, 0, 0);
-            render_char(frame_buf, 
+            u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), alphabet[random_count(arr_count(alphabet)-1)], &width, &height, 0, 0);
+            render_char(&framebuffer,
                 transform_to_screen_coords(rc_center_radius( e->pos , v2_f32{(f32)width/2.f,(f32)height/2.f}*gs->word_pixels_to_meters), 
                     gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels), bitmap, width, height);
             platform_free_file_memory(f.mem);
@@ -819,9 +836,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         }
     }
 
-    game_render_img(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &gs->DEBUG_mouse);
+    game_render_img(&framebuffer, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &gs->DEBUG_mouse);
 
-    //Deletion Loop
+    //Deletion Loop //TODO(fran): should deletion happen before render?
     for (u32 i = 1; i < gs->entity_count; i++) {
         if (!is_set(&gs->entities[i], entity_flag_alive)) { //TODO(fran): would a destroy flag be better? so you dont have to set alive on each entity creation
             clear_collision_rules_for(gs, &gs->entities[i]);//NOTE: I dont really know if the collision rule idea will be useful for the simple game im making right now, but it looks like an interesting concept to understand so I'm doing it anyway to learn

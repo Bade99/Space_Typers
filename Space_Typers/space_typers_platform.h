@@ -59,13 +59,11 @@ struct game_input {
     f32 dt_sec;
 };
 
-struct game_framebuffer {
-    void* bytes{ 0 };
+struct game_framebuffer { //NOTE: must have 4 bytes per pixel
+    void* mem{ 0 };
     i32 width;
     i32 height;
-    i32 bytes_per_pixel;
     i32 pitch;
-    //TODO(fran): add pitch?
 };
 
 struct game_soundbuffer {
