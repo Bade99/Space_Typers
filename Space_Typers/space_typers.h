@@ -21,6 +21,14 @@
 
 #define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
 
+#define zero_struct(instance) zero_mem(&(instance),sizeof(instance))
+void zero_mem(void* ptr, u32 sz) {
+    //TODO(fran): performance
+    u8* bytes = (u8*)ptr;
+    while (sz--)
+        *bytes++ = 0;
+}
+
 struct argb_f32 { f32 a, r, g, b; };
 
 
@@ -32,18 +40,6 @@ struct img {
     i32 pitch;
     void* mem;
 };
-
-//struct Word {
-//    v2_f32 pos;
-//    //v2_f32 speed;
-//    utf16 txt[25];
-//};
-
-//struct game_world {
-//    int width, height;
-//};
-
-
 
 //struct game_state_TODO {
 //    float accumulated_time;
@@ -89,7 +85,7 @@ struct game_entity {
     v2_f32 velocity;
     v2_f32 acceleration; //TODO: apply to every entity
     u32 flags;
-    //utf16 txt[25];
+    
     //TODO(fran): add enum for entity type?
     game_entity_type type;
 
@@ -99,6 +95,8 @@ struct game_entity {
 
     //v2_i32 align; //TODO(fran): add align offset to change the position of the bitmap relative to a point (Handmade hero day 39)
 
+    utf32 txt[25];
+    img image;
 };
 
 //NOTE REMEMBER: you cant check for multiple flags set at the same time, eg a|b|c will return true if any single one is set, not only if all are
@@ -174,18 +172,19 @@ struct game_state {
     f32 word_pixels_to_meters;
     v2_f32 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
-    game_memory_arena memory_arena;
+    game_memory_arena permanent_arena;
+    game_memory_arena transient_arena; //NOTE: transient does not necessarily mean it gets "destroyed" after each frame but that it can be thrown away at any time and the stuff inside regenerated
 
     img DEBUG_background;
     img DEBUG_menu;
     img DEBUG_mouse;
 
+    img word_corner;
+    img word_border;
+    img word_inside;
+
     v2_f32 camera;
-#ifdef _DEBUG
-    game_entity entities[256];
-#else
     game_entity entities[20];
-#endif
     u32 entity_count;
 
     pairwise_collision_rule* collision_rule_hash[256]; //NOTE: must be a power of 2

@@ -84,7 +84,7 @@ void DEBUG_unload_png(img* image) {
     //TODO(fran): zero the other members?
 }
 
-void game_render_img_ignore_transparency(img* buf, v2_f32 pos, img* image) {
+void game_render_img_ignore_transparency(img* buf, v2_f32 pos, img* image) { //TODO(fran): render from the center
 
     v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
     v2_i32 max = { round_f32_to_i32(pos.x + image->width), round_f32_to_i32(pos.y + image->height) };
@@ -114,12 +114,15 @@ void game_render_img_ignore_transparency(img* buf, v2_f32 pos, img* image) {
 
 }
 
+//NOTE: pos will be the center of the image
 void game_render_img(img* buf, v2_f32 pos, img* image,f32 dimming=1.f) { //NOTE: interesting idea: the thing that we read from and the thing that we write to are handled symmetrically (img-img)
 
     game_assert(dimming >= 0.f && dimming <= 1.f);
 
-    v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
-    v2_i32 max = { round_f32_to_i32(pos.x+ image->width), round_f32_to_i32(pos.y+ image->height) };
+    rc2 rec = rc_center_radius(pos, v2_f32_from_i32(image->width / 2, image->height / 2));
+
+    v2_i32 min = { round_f32_to_i32(rec.get_min().x), round_f32_to_i32(rec.get_min().y) };//TODO: cleanup, make simpler
+    v2_i32 max = { round_f32_to_i32(rec.get_max().x), round_f32_to_i32(rec.get_max().y) };
 
     int offset_x=0;
     int offset_y=0;
@@ -191,6 +194,35 @@ min_max_v2_f32 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels,
     v2_f32 max_pixels_camera_screen = { lower_left_pixels.x + max_pixels_camera.x , lower_left_pixels.y - max_pixels_camera.y };
 
     return { min_pixels_camera_screen , max_pixels_camera_screen };
+}
+
+rc2 transform_to_screen_coords(rc2 game_coords, game_state* gs) {
+    //TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
+    v2_f32 min_pixels = v2_f32{ game_coords.center.x - game_coords.radius.x , game_coords.center.y + game_coords.radius.y}*gs->word_meters_to_pixels;
+
+    v2_f32 min_pixels_camera = min_pixels - gs->camera;
+
+    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
+    v2_f32 min_pixels_camera_screen = { gs->lower_left_pixels.x + min_pixels_camera.x , gs->lower_left_pixels.y - min_pixels_camera.y };
+
+    v2_f32 max_pixels = v2_f32{ game_coords.center.x + game_coords.radius.x , game_coords.center.y - game_coords.radius.y}*gs->word_meters_to_pixels;
+
+    v2_f32 max_pixels_camera = max_pixels - gs->camera;
+
+    v2_f32 max_pixels_camera_screen = { gs->lower_left_pixels.x + max_pixels_camera.x , gs->lower_left_pixels.y - max_pixels_camera.y };
+
+    return rc_min_max(min_pixels_camera_screen , max_pixels_camera_screen);
+}
+
+v2_f32 transform_to_screen_coords(v2_f32 game_coords, f32 meters_to_pixels, v2_f32 camera_pixels, v2_f32 lower_left_pixels) {
+    v2_f32 pixels = { game_coords.x * meters_to_pixels, game_coords.y * meters_to_pixels };
+
+    v2_f32 pixels_camera = pixels - camera_pixels;
+
+    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
+    v2_f32 pixels_camera_screen = { lower_left_pixels.x + pixels_camera.x , lower_left_pixels.y - pixels_camera.y };
+
+    return pixels_camera_screen;
 }
 
 void render_char(img* buf, min_max_v2_f32 min_max, u8* bmp, int width, int height) { //TODO(fran): premultiplied alpha? and generalize img to img operation
@@ -271,13 +303,33 @@ void game_render_rectangle(img* buf, min_max_v2_f32 min_max, argb_f32 colorf) {
     }
 }
 
+void game_render_rectangle_boundary(img* buf, rc2 rc, argb_f32 color) {
+    //The Rectangles are filled NOT including the final row/column
+
+    f32 thickness = 2.f;
+
+    min_max_v2_f32 m;
+    m.min = rc.get_min();
+    m.max.x = m.min.x + thickness; m.max.y = rc.get_max().y;
+    game_render_rectangle(buf, m, color);//left
+    m.min = rc.get_min(); m.min.x += thickness;
+    m.max.x= rc.get_max().x - thickness; m.max.y = rc.get_min().y + thickness;//TODO(fran): here down is up again
+    game_render_rectangle(buf, m, color);//top
+    m.min.x = rc.get_min().x + thickness; m.min.y = rc.get_max().y - thickness;
+    m.max = rc.get_max(); m.max.x -= thickness;
+    game_render_rectangle(buf, m, color);//bottom
+    m.min.x = rc.get_max().x - thickness; m.min.y = rc.get_min().y;
+    m.max = rc.get_max();
+    game_render_rectangle(buf, m, color);//right
+}
+
 void game_add_entity(game_state* game_st, const game_entity* new_entity) {
     game_assert(game_st->entity_count+1 < arr_count(game_st->entities));
     game_st->entities[game_st->entity_count] = *new_entity; //TODO(fran): im pretty sure this cant be a straight copy no more, now we have the collision array
     game_st->entity_count++;
 }
 
-void game_remove_entity(game_state* gs, u32 index) {
+void game_remove_entity(game_state* gs, u32 index) { //TODO(fran): remove entity for real, clear img and etc
     assert(index < gs->entity_count);
     if (index != gs->entity_count - 1) {
         gs->entities[index] = gs->entities[gs->entity_count - 1];
@@ -331,7 +383,7 @@ void add_collision_rule(game_state* gs, game_entity* A, game_entity* B, bool can
             gs->first_free_collision_rule = gs->first_free_collision_rule->next_in_hash;
         }
         else {
-            found = push_type(&gs->memory_arena, pairwise_collision_rule);
+            found = push_type(&gs->permanent_arena, pairwise_collision_rule);//TODO(fran): pass arena as param
         }
         found->next_in_hash = gs->collision_rule_hash[hash_bucket];
         gs->collision_rule_hash[hash_bucket] = found;
@@ -599,7 +651,81 @@ game_entity create_word_spawner(game_memory_arena* arena, v2_f32 pos, v2_f32 rad
     return word_spawner;
 }
 
-game_entity create_word(game_memory_arena* arena, v2_f32 pos, v2_f32 radius, v2_f32 velocity, argb_f32 color) {
+void clear_img(img* image) {
+    if(image->mem)
+        zero_mem(image->mem, image->width * image->height * IMG_BYTES_PER_PIXEL);
+}
+
+img make_empty_img(game_memory_arena* arena, u32 width, u32 height, bool clear_to_zero=true) {//TODO(fran): should allow for negative sizes?
+    img res;
+    res.width = width;
+    res.height = height;
+    res.pitch = width * IMG_BYTES_PER_PIXEL;
+    res.mem = _push_mem(arena, width * height * IMG_BYTES_PER_PIXEL);
+    if(clear_to_zero)
+        clear_img(&res);
+    return res;
+}
+
+img make_word_background_image(game_state* gs, u32 word_width_px, u32 word_height_px){
+    i32 borders_hor = 1;
+    i32 borders_vert = 1;
+    i32 img_width = gs->word_corner.width*2+gs->word_border.width*borders_hor;
+    i32 img_height = gs->word_corner.height * 2 + gs->word_border.width * borders_vert;
+    img res = make_empty_img(&gs->permanent_arena, img_width, img_height); //TODO(fran): pass arena as param
+    //TODO(fran): would it be better to render the top and then flip it to draw the bottom?
+
+    //IMPORTANT TODO(fran): see handmade day 85 min 39, would it make sense to store the new images in a transient arena? if so what happens when the arena gets cleared, how do I know from the word's point of view, that it's img is no longer valid? should I instead create some structure (hash table, etc) that provides access to the imgs and is referenced say by the width and height of the img, if that combination is not present then I create it and enter the entry into the hash table, we could use a similar scheme to the one handmade hero plans in that episode, with the lru(least recently used) idea, we can predict, for example a limit of say 30 words at maximum visible in a single moment (note: he made a couple typos and initialized memory with the mem size instead of the pointer)
+    
+    //draw corners
+    i32 offsetx=0;
+    i32 offsety=0;
+    game_render_img(&res, v2_f32_from_i32(offsetx+gs->word_border.width/2,offsety+gs->word_border.height / 2), &gs->word_corner);
+    offsetx = gs->word_corner.width + gs->word_border.width * borders_hor;
+    offsety = 0;
+    game_render_img(&res, v2_f32_from_i32(offsetx+gs->word_border.width/2,offsety+gs->word_border.height / 2), &gs->word_corner);
+    offsetx = 0;
+    offsety = gs->word_corner.height + gs->word_border.height * borders_vert;
+    game_render_img(&res, v2_f32_from_i32(offsetx+gs->word_border.width/2,offsety+gs->word_border.height / 2), &gs->word_corner);
+    offsetx = gs->word_corner.width + gs->word_border.width * borders_hor;
+    offsety = gs->word_corner.height + gs->word_border.height * borders_vert;
+    game_render_img(&res, v2_f32_from_i32(offsetx+gs->word_border.width/2,offsety+gs->word_border.height / 2), &gs->word_corner);
+
+    //draw top border
+    offsetx = gs->word_corner.width;
+    offsety = 0;
+    for (i32 i = 0; i < borders_hor; i++) {
+        game_render_img(&res, v2_f32_from_i32(offsetx + gs->word_border.width / 2, offsety+ gs->word_border.height / 2), &gs->word_border);
+        offsetx+= gs->word_border.width;
+    }
+
+    //draw bottom border
+    offsetx = gs->word_corner.width;
+    offsety = gs->word_corner.height + gs->word_border.height*borders_vert;
+    for (i32 i = 0; i < borders_hor; i++) {
+        game_render_img(&res, v2_f32_from_i32(offsetx + gs->word_border.width / 2, offsety + gs->word_border.height / 2), &gs->word_border);
+        offsetx += gs->word_border.width;
+    }
+
+    //draw left border
+    offsetx = 0;
+    offsety = gs->word_corner.height;
+    for (i32 i = 0; i < borders_hor; i++) {
+        game_render_img(&res, v2_f32_from_i32(offsetx + gs->word_border.width / 2, offsety + gs->word_border.height / 2), &gs->word_border);
+        offsety += gs->word_corner.height;
+    }
+
+    //draw right border
+    offsetx = gs->word_corner.width+gs->word_border.width*borders_hor;
+    offsety = gs->word_corner.height;
+    for (i32 i = 0; i < borders_hor; i++) {
+        game_render_img(&res, v2_f32_from_i32(offsetx + gs->word_border.width / 2, offsety + gs->word_border.height / 2), &gs->word_border);
+        offsety += gs->word_corner.height;
+    }
+    return res;
+}
+
+game_entity create_word(game_state* gs, v2_f32 pos, v2_f32 radius, v2_f32 velocity, argb_f32 color) {
     //TODO(fran): radius should be determined by the lenght of the word it contains
     game_entity word;
     word.flags = entity_flag_collides | entity_flag_alive;
@@ -609,26 +735,15 @@ game_entity create_word(game_memory_arena* arena, v2_f32 pos, v2_f32 radius, v2_
     word.velocity = velocity;
     word.type = entity_word;
     word.acceleration = { 0,0 };
-    word.collision = make_simple_collision_box(arena, { 0,0 }, radius);
+    word.collision = make_simple_collision_box(&gs->permanent_arena, { 0,0 }, radius); //TODO(fran): arena should be passed as separate param
+
+    char alphabet[] = "abcdefghijklmnopqrstuvwxyz";
+    word.txt[0] = alphabet[random_count(arr_count(alphabet) - 1)];
+    //TODO(fran): generate bitmap based on word metrics (we will need font info)
+    // we need a square generator that takes a corner, a side, and an inside (rotates the corner to generate the 4 ones)
+    word.image = make_word_background_image(gs, 0, 0);
+
     return word;
-}
-
-#define zero_struct(instance) zero_mem(&(instance),sizeof(instance))
-void zero_mem(void* ptr, u32 sz) {
-    //TODO(fran): performance
-    u8* bytes = (u8*)ptr;
-    while (sz--)
-        *bytes++ = 0;
-}
-
-img make_empty_img(game_memory_arena* arena,u32 width, u32 height) {//TODO(fran): should allow for negative sizes?
-    img res;
-    res.width = width;
-    res.height = height;
-    res.pitch = width * IMG_BYTES_PER_PIXEL;
-    res.mem = _push_mem(arena, width * height * IMG_BYTES_PER_PIXEL);
-    zero_mem(res.mem, width * height * IMG_BYTES_PER_PIXEL);
-    return res;
 }
 
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
@@ -656,7 +771,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         null_entity.type = entity_null; //NOTE: just in case
         game_add_entity(gs, &null_entity); //NOTE: entity index 0 is reserved as NULL
 
-        gs->word_height_meters = 1.5f;//TODO(fran): maybe this would be better placed inside world
+        gs->word_height_meters = 1.5f;//TODO(fran): maybe this would be better placed inside world //TODO(fran): handmade day 86 min 45 mentions that it may be good to use values that generate a power of two integer for word_meters_to_pixels
         gs->word_height_pixels = 60;
 
         gs->lower_left_pixels = { 0.f,(f32)frame_buf->height };
@@ -665,13 +780,14 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
         gs->word_pixels_to_meters = 1 / gs->word_meters_to_pixels;
 
-        initialize_arena(&gs->memory_arena, (u8*)memory->permanent_storage + sizeof(game_state), memory->permanent_storage_sz - sizeof(game_state));
+        initialize_arena(&gs->permanent_arena, (u8*)memory->permanent_storage + sizeof(game_state), memory->permanent_storage_sz - sizeof(game_state));
+        initialize_arena(&gs->transient_arena, (u8*)memory->transient_storage, memory->transient_storage_sz);
 
-        gs->world.stages = push_type(&gs->memory_arena,game_stage);
+        gs->world.stages = push_type(&gs->permanent_arena,game_stage);
         gs->world.stage_count = 1;
         gs->world.current_stage = 0;
 
-        gs->world.stages[0].lvls = push_arr(&gs->memory_arena, game_level_map, 2);
+        gs->world.stages[0].lvls = push_arr(&gs->permanent_arena, game_level_map, 2);
         gs->world.stages[0].level_count = 2; //TODO(fran): can we use sizeof_arr ?? I doubt it
         gs->world.stages[0].current_lvl = 0;
 
@@ -679,28 +795,28 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_level_map& level2 = gs->world.stages[0].lvls[1];
 
 #define LVL1_ENTITY_COUNT 3
-        level1.entities = push_arr(&gs->memory_arena, game_entity, LVL1_ENTITY_COUNT);
+        level1.entities = push_arr(&gs->permanent_arena, game_entity, LVL1_ENTITY_COUNT);
         level1.entity_count = LVL1_ENTITY_COUNT;
 
-        level2.entities = push_arr(&gs->memory_arena, game_entity, LVL1_ENTITY_COUNT);
+        level2.entities = push_arr(&gs->permanent_arena, game_entity, LVL1_ENTITY_COUNT);
         level2.entity_count = LVL1_ENTITY_COUNT;
         {
-            game_entity level1_wall = create_wall(&gs->memory_arena, v2_f32{ 8.f , 9.5f }*gs->word_height_meters, v2_f32{ .5f , 4.5f }*gs->word_height_meters, { 0.f,1.f,0.f,0.f });
+            game_entity level1_wall = create_wall(&gs->permanent_arena, v2_f32{ 8.f , 9.5f }*gs->word_height_meters, v2_f32{ .5f , 4.5f }*gs->word_height_meters, { 0.f,1.f,0.f,0.f });
 
-            game_entity level1_player = create_player(&gs->memory_arena,v2_f32{ 11.f ,5.f }*gs->word_height_meters, v2_f32{ .5f , .5f }*gs->word_height_meters, { .0f,.0f,.0f,1.0f });
+            game_entity level1_player = create_player(&gs->permanent_arena,v2_f32{ 11.f ,5.f }*gs->word_height_meters, v2_f32{ .5f , .5f }*gs->word_height_meters, { .0f,.0f,.0f,1.0f });
 
-            game_entity level1_word_spawner= create_word_spawner(&gs->memory_arena,v2_f32{ 19.5f, 10.5f } *gs->word_height_meters, v2_f32{ .5f , 4.f } *gs->word_height_meters);
+            game_entity level1_word_spawner= create_word_spawner(&gs->permanent_arena,v2_f32{ 19.5f, 10.5f } *gs->word_height_meters, v2_f32{ .5f , 4.f } *gs->word_height_meters);
 
             level1.entities[0] = level1_wall;
             level1.entities[1] = level1_player;
             level1.entities[2] = level1_word_spawner;
         }
         {
-            game_entity level2_wall = create_wall(&gs->memory_arena,v2_f32{ 8.5f , 7.5f }*gs->word_height_meters, v2_f32{ .5f , 4.5f }*gs->word_height_meters, { 0.f,1.f,0.f,0.f });
+            game_entity level2_wall = create_wall(&gs->permanent_arena,v2_f32{ 8.5f , 7.5f }*gs->word_height_meters, v2_f32{ .5f , 4.5f }*gs->word_height_meters, { 0.f,1.f,0.f,0.f });
 
-            game_entity level2_player = create_player(&gs->memory_arena,v2_f32{ 11.f ,5.f }*gs->word_height_meters, v2_f32{ .75f , .75f }*gs->word_height_meters, { .0f,.0f,.0f,1.0f });
+            game_entity level2_player = create_player(&gs->permanent_arena,v2_f32{ 11.f ,5.f }*gs->word_height_meters, v2_f32{ .75f , .75f }*gs->word_height_meters, { .0f,.0f,.0f,1.0f });
 
-            game_entity level2_word_spawner = create_word_spawner(&gs->memory_arena,v2_f32{ 16.5f , 10.5f }*gs->word_height_meters, v2_f32{ .5f , .5f }*gs->word_height_meters);
+            game_entity level2_word_spawner = create_word_spawner(&gs->permanent_arena,v2_f32{ 16.5f , 10.5f }*gs->word_height_meters, v2_f32{ .5f , .5f }*gs->word_height_meters);
 
             level2.entities[0] = level2_wall;
             level2.entities[1] = level2_player;
@@ -712,6 +828,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->DEBUG_menu = DEBUG_load_png("assets/img/down.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_menu.align = { 20,20 };
         gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
+
+        gs->word_border = DEBUG_load_png("assets/img/word_border.png");
+        gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
+        gs->word_inside = DEBUG_load_png("assets/img/word_inside.png");
 
         gs->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
 
@@ -782,7 +902,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
                 spawner_entity.accumulated_time_sec = 0;
                 v2_f32 pos = { lerp(spawner_entity.pos.x + spawner_entity.collision.total_area.offset.x - spawner_entity.collision.total_area.radius.x,spawner_entity.pos.x + spawner_entity.collision.total_area.offset.x + spawner_entity.collision.total_area.radius.x, random_unilateral()),lerp(spawner_entity.pos.y + spawner_entity.collision.total_area.offset.y - spawner_entity.collision.total_area.radius.y,spawner_entity.pos.y + spawner_entity.collision.total_area.offset.y + spawner_entity.collision.total_area.radius.y, random_unilateral()) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point //TODO(fran): pick one of the collision areas and spawn from there, or maybe better to just say we use only one for this guy, since it also needs to generate the direction of the word, and then we'd need to store different directions
                 
-                game_entity word = create_word(&gs->memory_arena,pos, v2_f32{ .5f , .5f  }*gs->word_height_meters, v2_f32{ -1,0 }*(5 * gs->word_height_meters)* random_unilateral(), { random_unilateral(),random_unilateral() ,random_unilateral() ,random_unilateral() });
+                game_entity word = create_word(gs,pos, v2_f32{ .5f , .5f  }*gs->word_height_meters, v2_f32{ -1,0 }*(5 * gs->word_height_meters)* random_unilateral(), { random_unilateral(),random_unilateral() ,random_unilateral() ,random_unilateral() });
                 
                 game_add_entity(gs, &word);
 
@@ -807,26 +927,23 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     game_render_img_ignore_transparency(&framebuffer, { (f32)framebuffer.width/2 - gs->DEBUG_background.width / 2,(f32)framebuffer.height/2 - gs->DEBUG_background.height/2 } , &gs->DEBUG_background);
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
-    game_render_img(&framebuffer, { 0,(f32)framebuffer.height - gs->DEBUG_menu.height }, &gs->DEBUG_menu,.5f); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
+    game_render_img(&framebuffer, { (f32)gs->DEBUG_menu.width/2.f,(f32)framebuffer.height - gs->DEBUG_menu.height/2 }, &gs->DEBUG_menu,.5f); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
 
     //Render Loop, TODO(fran): separate by entity type
     for (u32 i = 1; i < gs->entity_count; i++) {
-        const game_entity* e = &gs->entities[i];
-        game_render_rectangle( //TODO(fran): change to render_bounding_box (just the borders)
-            &framebuffer,
-            transform_to_screen_coords({ e->pos + e->collision.total_area.offset , e->collision.total_area.radius }, gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels),
-            e->color); //TODO(fran): iterate over all collision areas and render each one
+        game_entity* e = &gs->entities[i];
         switch (e->type) {
         case entity_word:
         {
+            game_render_img(&framebuffer, transform_to_screen_coords(e->pos,gs->word_meters_to_pixels,gs->camera,gs->lower_left_pixels), &e->image); //TODO(fran): transform_to_screen_coords should only need the game_state passed
             stbtt_fontinfo font;
-            int width, height; char alphabet[] = "abcdefghijklmnopqrstuvwxyz";
+            int width, height; 
             platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); //TODO(fran): fonts folder inside /assets
             stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
-            u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), alphabet[random_count(arr_count(alphabet)-1)], &width, &height, 0, 0);
+            u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), e->txt[0], &width, &height, 0, 0);
             render_char(&framebuffer,
                 transform_to_screen_coords(rc_center_radius( e->pos , v2_f32{(f32)width/2.f,(f32)height/2.f}*gs->word_pixels_to_meters), 
                     gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels), bitmap, width, height);
@@ -834,6 +951,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             stbtt_FreeBitmap(bitmap, 0);
         } break;
         }
+        game_render_rectangle_boundary( //TODO(fran): change to render_bounding_box (just the borders) //TODO(fran): do at the end of each loop (bounding box should render above imgs)
+            &framebuffer,
+            transform_to_screen_coords(rc_center_radius(e->pos + e->collision.total_area.offset , e->collision.total_area.radius), gs),
+            e->color); //TODO(fran): iterate over all collision areas and render each one
     }
 
     game_render_img(&framebuffer, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, &gs->DEBUG_mouse);

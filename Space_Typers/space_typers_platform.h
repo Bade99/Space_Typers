@@ -16,6 +16,7 @@ typedef float f32;
 typedef double f64;
 
 typedef wchar_t utf16;
+typedef char32_t utf32;//TODO(fran): use utf32?
 
 #include "space_typers_vector.h" //TODO(fran): it's ugly to just have this guy here for v3_i32 in the controller, and we also have to put it after the typedefs
 

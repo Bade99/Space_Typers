@@ -82,6 +82,12 @@ f32 lenght_sq(v2_f32 v) {
     return res;
 }
 
+v2_f32 v2_f32_from_i32(i32 x, i32 y) {
+    v2_f32 res;
+    res.x = (f32)x;
+    res.y = (f32)y;
+    return res;
+}
 
 //V2_I32
 struct v2_i32 {
