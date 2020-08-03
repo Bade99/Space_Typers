@@ -423,7 +423,7 @@ game_entity_collision_area_group make_simple_collision_box(game_memory_arena* ar
 }
 
 //NOTE: radius is used to create the collision area, TODO(fran): I dont think I want to create the collision areas until the level is loaded, so maybe better is to store the radius (and offset) in an array, on the other hand... that's almost the same size as the collision area itself, hmm
-game_entity create_wall(game_memory_arena* arena, v2_f32 pos,v2_f32 radius, v4_f32 color) {//TODO(fran): v4 with both xyzw and rgba access
+game_entity create_wall(game_memory_arena* arena, v2_f32 pos,v2_f32 radius, v4 color) {//TODO(fran): v4 with both xyzw and rgba access
     game_entity wall;
     wall.acceleration = { 0,0 };
     wall.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
@@ -436,7 +436,7 @@ game_entity create_wall(game_memory_arena* arena, v2_f32 pos,v2_f32 radius, v4_f
     return wall;//std::move, I hope the compiler is intelligent enough
 }
 
-game_entity create_player(game_memory_arena* arena, v2_f32 pos, v2_f32 radius, v4_f32 color) {
+game_entity create_player(game_memory_arena* arena, v2_f32 pos, v2_f32 radius, v4 color) {
     game_entity player;
     player.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
     player.color = color;
@@ -541,7 +541,7 @@ img make_word_background_image(game_state* gs, game_memory_arena* transient_aren
     return res;
 }
 
-game_entity create_word(game_state* gs, game_memory_arena* transient_arena, v2_f32 pos, v2_f32 radius, v2_f32 velocity, v4_f32 color) {
+game_entity create_word(game_state* gs, game_memory_arena* transient_arena, v2_f32 pos, v2_f32 radius, v2_f32 velocity, v4 color) {
     //TODO(fran): radius should be determined by the lenght of the word it contains
     game_entity word;
     word.flags = entity_flag_collides | entity_flag_alive;
@@ -584,6 +584,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //NOTE IDEA: I see an aesthetic with oranges and white, warm colors, reds
 
     //IDEA: different visible walls for the words to collide against, so it creates sort of a priority system where some words must be typed first cause they are going to collide with a wall that is much closer than the one on the other side of the screen
+
+    //IDEA: I see the walls candy-like red with scrolling diagonal white lines
 
     if (!memory->is_initialized) {
         //game_st->hz = 256;
@@ -678,6 +680,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //REMEMBER: you get the input for the previous frame
     
+    gs->time += input->dt_sec;
+
     if (input->controller.back.ended_down) {
         gs->world.stages[0].current_lvl++;
         gs->world.stages[0].current_lvl %= gs->world.stages[0].level_count;
@@ -693,8 +697,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,gs->lower_left_pixels,Megabytes(1));
 
 #if _DEBUG
-    clear(rg, v4_f32{ 1.f,0.f,1.f,1.f });
-    //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4_f32{ 1.f,0.f,1.f,0 });;
+    clear(rg, v4{ 1.f,0.f,1.f,1.f });
+    //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4{ 1.f,0.f,1.f,0 });;
 #endif
 
     v2_f32 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 }; //SUPERTODO: put camera in mtrs space !!!!!!!!!!!!!!!!!!!!!!!!
@@ -795,6 +799,17 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
+    v2_f32 origin = screen_offset + 30.f * v2_f32{ 0,sinf(gs->time) };
+    v2_f32 x_axis = 100.f*v2_f32{cosf(gs->time),sinf(gs->time)};
+    v2_f32 y_axis = 100.f*v2_f32{cosf(gs->time-2.f),sinf(gs->time + 2.f) };
+    v4 color{0,1.f,0,1.f};
+    u32 idx = 0;
+    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color);
+    for (f32 y = 0; y < 1.f; y += .25f)
+        for (f32 x = 0; x < 1.f; x += .25f)
+            c->points[idx++] = {x,y};
+    
+
     //Render Loop
     output_render_group(rg,&framebuffer);
 
@@ -830,7 +845,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
 
 
-//void game_render_rectangle_boundary(img* buf, rc2 rc, v4_f32 color) {
+//void game_render_rectangle_boundary(img* buf, rc2 rc, v4 color) {
 //
 //    f32 thickness = 2.f;
 //

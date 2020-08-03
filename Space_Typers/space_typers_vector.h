@@ -1,5 +1,7 @@
 #pragma once
 
+//NOTE: by default the vectors are to represent f32 values, therefore we will TODO(fran): change v2_f32 to v2
+
 //V2_F32
 struct v2_f32 {
     union {
@@ -99,8 +101,8 @@ struct v3_i32 {
     i32 x, y, z;
 };
 
-//V4_F32
-union v4_f32 {
+//V4 (F32)
+union v4 {
     struct {
         f32 x, y, z, w;
     };

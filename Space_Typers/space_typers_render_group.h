@@ -9,6 +9,7 @@ enum render_group_entry_type {
 	RenderGroupEntryType_render_entry_clear,
 	RenderGroupEntryType_render_entry_rectangle,
 	RenderGroupEntryType_render_entry_img,
+	RenderGroupEntryType_render_entry_coordinate_system,
 };
 
 struct render_group_entry_header {
@@ -17,13 +18,13 @@ struct render_group_entry_header {
 
 struct render_entry_clear {
 	render_group_entry_header header;
-	v4_f32 color;
+	v4 color;
 };
 struct render_entry_rectangle{
 	render_group_entry_header header;
 	render_basis basis;
 	rc2 rc;//NOTE: so I dont confuse it
-	v4_f32 color;
+	v4 color;
 };
 
 struct render_entry_img {
@@ -34,6 +35,16 @@ struct render_entry_img {
 
 
 	bool IGNOREALPHA; //HACK: get rid of this once we have optimized the renderer, I just use it to be able to render the background img without destroying performance
+};
+
+struct render_entry_coordinate_system {
+	render_group_entry_header header;//NOTE: dont forget to add the header (or remove it and just put the type)
+	v2_f32 origin;
+	v2_f32 x_axis;
+	v2_f32 y_axis;
+	v4 color;
+
+	v2_f32 points[16];
 };
 
 struct render_group {
@@ -119,7 +130,7 @@ void* _push_render_element(render_group* group, u32 sz, render_group_entry_type 
 }
 
 //NOTE: I think he used offset as pos, and basis will be useful later for transformations
-void push_rect(render_group* group, rc2 rect_mtrs, v4_f32 color) { //TODO(fran): check whether it is more useful to use rc2 or two v2_f32
+void push_rect(render_group* group, rc2 rect_mtrs, v4 color) { //TODO(fran): check whether it is more useful to use rc2 or two v2_f32
 	render_entry_rectangle* p = push_render_element(group,render_entry_rectangle); //TODO(fran): check we received a valid ptr?
 	p->basis = group->default_basis;
 	p->color = color;
@@ -135,7 +146,7 @@ void push_img(render_group* group, v2_f32 pos_mtrs, img* image, bool IGNOREALPHA
 	p->IGNOREALPHA = IGNOREALPHA;
 }
 
-void push_rect_boundary(render_group* group, rc2 rect_mtrs, v4_f32 color) {
+void push_rect_boundary(render_group* group, rc2 rect_mtrs, v4 color) {
 	f32 thickness=(1/group->meters_to_pixels) *2.f;
 	//left right
 	push_rect(group, rc_center_radius(rect_mtrs.center - v2_f32{ rect_mtrs.radius.x,0 }, v2_f32{ thickness, rect_mtrs.radius.y }), color); //TODO(fran): this enlarges the rectangle a bit, game_render_rectangle_boundary does it better, benefit here is that it is direction independent
@@ -145,12 +156,21 @@ void push_rect_boundary(render_group* group, rc2 rect_mtrs, v4_f32 color) {
 	push_rect(group, rc_center_radius(rect_mtrs.center + v2_f32{ 0,rect_mtrs.radius.y }, v2_f32{ rect_mtrs.radius.x, thickness }), color);
 }
 
-void clear(render_group* group, v4_f32 color) {
+void clear(render_group* group, v4 color) {
 	render_entry_clear* p = push_render_element(group, render_entry_clear); //TODO(fran): check we received a valid ptr?
 	p->color = color;
 }
 
-void game_render_rectangle(img* buf, rc2 rect, v4_f32 color) {
+render_entry_coordinate_system* push_coord_system(render_group* group, v2_f32 origin, v2_f32 x_axis, v2_f32 y_axis, v4 color) {
+	render_entry_coordinate_system* p = push_render_element(group, render_entry_coordinate_system); //TODO(fran): check we received a valid ptr?
+	p->origin = origin;
+	p->x_axis = x_axis;
+	p->y_axis = y_axis;
+	p->color = color;
+	return p;
+}
+
+void game_render_rectangle(img* buf, rc2 rect, v4 color) {
 	//The Rectangles are filled NOT including the final row/column
 	v2_i32 min = { round_f32_to_i32(rect.get_min().x), round_f32_to_i32(rect.get_min().y) };
 	v2_i32 max = { round_f32_to_i32(rect.get_max().x), round_f32_to_i32(rect.get_max().y) };
@@ -282,7 +302,7 @@ void output_render_group(render_group* rg, img* output_target) {
 		{
 			render_entry_clear* entry = (render_entry_clear*)header;
 			game_render_rectangle(output_target, rc_min_max({ 0,0 }, v2_f32_from_i32(output_target->width,output_target->height)), entry->color);
-			base += sizeof(*entry);
+			base += sizeof(*entry); //TODO(fran): annoying to have to remember to add this
 		} break;
 		case RenderGroupEntryType_render_entry_rectangle:
 		{
@@ -302,6 +322,26 @@ void output_render_group(render_group* rg, img* output_target) {
 			pos -= entry->image->alignment_px;
 			if (entry->IGNOREALPHA) game_render_img_ignore_transparency(output_target, pos, entry->image);
 			else game_render_img(output_target, pos, entry->image);
+		} break;
+		case RenderGroupEntryType_render_entry_coordinate_system:
+		{
+			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)header;
+			base += sizeof(*entry);
+			v2_f32 center = entry->origin;
+			v2_f32 radius = { 2,2 };
+			//game_render_rectangle(output_target, rc_center_radius(center,radius), entry->color);
+			center = entry->origin + entry->x_axis;
+			//game_render_rectangle(output_target, rc_center_radius(center,radius), entry->color);
+			center = entry->origin + entry->y_axis;
+			//game_render_rectangle(output_target, rc_center_radius(center, radius), entry->color);
+
+			for (u32 idx = 0; idx < arr_count(entry->points); idx++) {
+				v2_f32 p = entry->points[idx];
+				center = entry->origin + p.x*entry->x_axis + p.y*entry->y_axis;
+				game_render_rectangle(output_target, rc_center_radius(center, radius), entry->color);
+			}
+
+
 		} break;
 		default: game_assert(0); break;
 		}

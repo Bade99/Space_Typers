@@ -88,7 +88,7 @@ struct game_entity {
     v2_f32 pos;
     //v2_f32 radius;
     game_entity_collision_area_group collision;
-    v4_f32 color;
+    v4 color;
     v2_f32 velocity;
     v2_f32 acceleration; //TODO: apply to every entity
     u32 flags;
@@ -198,6 +198,8 @@ struct game_state {
 
     pairwise_collision_rule* collision_rule_hash[256]; //NOTE: must be a power of 2
     pairwise_collision_rule* first_free_collision_rule; //NOTE: free store from previously deleted collision rules
+
+    f32 time;
 };
 
 //TODO(fran): check what casey said about adding static to functions to reduce link/compilation time (explanation in day 53, min ~1:05:00)
