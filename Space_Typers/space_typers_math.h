@@ -55,19 +55,19 @@ f32 lerp(f32 n1, f32 n2, f32 t) { //TODO(fran): put t as the middle param?
 	return (1.f - t) * n1 + t * n2;
 }
 
-v2_f32 lerp(v2_f32 n1, v2_f32 n2, f32 t) {
+v2 lerp(v2 n1, v2 n2, f32 t) {
 	//NOTE: interesting that https://en.wikipedia.org/wiki/Linear_interpolation mentions this is the Precise method
 	return (1.f - t) * n1 + t * n2;
 }
 
-v2_f32 hadamard(v2_f32 v1, v2_f32 v2) {
+v2 hadamard(v2 a, v2 b) {
 	//Per component product
-	v2_f32 res = { v1.x * v2.x, v1.y * v2.y };
+	v2 res = { a.x * b.x, a.y * b.y };
 	return res;
 }
 
 bool rcs_intersect(rc2 r1, rc2 r2) {
-	v2_f32 r1_min=r1.get_min(), r1_max=r1.get_max(), r2_min=r2.get_min(), r2_max=r2.get_max();
+	v2 r1_min=r1.get_min(), r1_max=r1.get_max(), r2_min=r2.get_min(), r2_max=r2.get_max();
 	bool res = !(r2_max.x <= r1_min.x || r2_min.x >= r1_max.x
 		      || r2_max.y <= r1_min.y || r2_min.y >= r1_max.y);
 	return res;
@@ -117,5 +117,12 @@ u32 round_f32_to_u32(f32 n) {
 	game_assert(n >= 0.f);
 	//TODO(fran): intrinsic
 	u32 res = (u32)(n + .5f);
+	return res;
+}
+
+v2 perp(v2 v) {//generate orthogonal vector
+	v2 res; 
+	res.x = -v.y;
+	res.y = v.x;
 	return res;
 }

@@ -44,7 +44,7 @@ struct img {
     i32 width;
     i32 height;
     i32 pitch;
-    v2_f32 alignment_px; //NOTE: offset from the center of the img that moves its position
+    v2 alignment_px; //NOTE: offset from the center of the img that moves its position
     void* mem;
 };
 
@@ -74,8 +74,8 @@ enum game_entity_flags {
 };
 
 struct game_entity_collision_area {
-    v2_f32 offset; //NOTE: offset from entity pos
-    v2_f32 radius;
+    v2 offset; //NOTE: offset from entity pos
+    v2 radius;
 };
 
 struct game_entity_collision_area_group {
@@ -85,12 +85,12 @@ struct game_entity_collision_area_group {
 };
 
 struct game_entity {
-    v2_f32 pos;
-    //v2_f32 radius;
+    v2 pos;
+    //v2 radius;
     game_entity_collision_area_group collision;
     v4 color;
-    v2_f32 velocity;
-    v2_f32 acceleration; //TODO: apply to every entity
+    v2 velocity;
+    v2 acceleration; //TODO: apply to every entity
     u32 flags;
     
     //TODO(fran): add enum for entity type?
@@ -179,7 +179,7 @@ struct game_state {
     i32 word_height_pixels;
     f32 word_meters_to_pixels;
     f32 word_pixels_to_meters;
-    v2_f32 lower_left_pixels;
+    v2 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena permanent_arena;
     game_memory_arena one_frame_arena;//gets reset at the end of each frame
@@ -192,7 +192,7 @@ struct game_state {
     img word_border;
     img word_inside;
 
-    v2_f32 camera;
+    v2 camera;
     game_entity entities[20];
     u32 entity_count;
 
