@@ -84,153 +84,10 @@ void DEBUG_unload_png(img* image) {
     //TODO(fran): zero the other members?
 }
 
-void game_render_img_ignore_transparency(img* buf, v2_f32 pos, img* image) { //TODO(fran): render from the center
-
-    v2_i32 min = { round_f32_to_i32(pos.x), round_f32_to_i32(pos.y) };
-    v2_i32 max = { round_f32_to_i32(pos.x + image->width), round_f32_to_i32(pos.y + image->height) };
-
-    int offset_x = 0;
-    int offset_y = 0;
-
-    if (min.x < 0) { offset_x = -min.x;  min.x = 0; }
-    if (min.y < 0) { offset_y = -min.y; min.y = 0; }
-    if (max.x > buf->width)max.x = buf->width;
-    if (max.y > buf->height)max.y = buf->height;
-
-
-    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
-    u8* img_row = (u8*)image->mem + offset_x * IMG_BYTES_PER_PIXEL + offset_y * image->pitch;
-
-    for (int y = min.y; y < max.y; y++) {
-        u32* pixel = (u32*)row;
-        u32* img_pixel = (u32*)img_row;
-        for (int x = min.x; x < max.x; x++) {
-            //AARRGGBB
-            *pixel++ = *img_pixel++;
-        }
-        row += buf->pitch;
-        img_row += image->pitch; //NOTE: now I starting seeing the benefits of using pitch, very easy to change rows when you only have to display parts of the img
-    }
-
-}
-
-//NOTE: pos will be the center of the image
-void game_render_img(img* buf, v2_f32 pos, img* image,f32 dimming=1.f) { //NOTE: interesting idea: the thing that we read from and the thing that we write to are handled symmetrically (img-img)
-
-    //NOTE: see handmade day 87 for a very nice way of generating seamless img chunks thanks to the pseudo randomness and ordered rendering, example of good arquitecting/planning
-
-    game_assert(dimming >= 0.f && dimming <= 1.f);
-
-    rc2 rec = rc_center_radius(pos, v2_f32_from_i32(image->width / 2, image->height / 2));
-
-    v2_i32 min = { round_f32_to_i32(rec.get_min().x), round_f32_to_i32(rec.get_min().y) };//TODO: cleanup, make simpler
-    v2_i32 max = { round_f32_to_i32(rec.get_max().x), round_f32_to_i32(rec.get_max().y) };
-
-    int offset_x=0;
-    int offset_y=0;
-
-    if (min.x < 0) { offset_x = -min.x ;  min.x = 0; }
-    if (min.y < 0) { offset_y = -min.y; min.y = 0; }
-    if (max.x > buf->width)max.x = buf->width;
-    if (max.y > buf->height)max.y = buf->height;
-
-    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
-    u8* img_row = (u8*)image->mem + offset_x* IMG_BYTES_PER_PIXEL + offset_y*image->pitch;
-    
-    for (int y = min.y; y < max.y; y++) {
-        u32* pixel = (u32*)row;
-        u32* img_pixel = (u32*)img_row;
-        for (int x = min.x; x < max.x; x++) {
-            //AARRGGBB
-
-            //very slow linear blend
-            f32 s_a = (f32)((*img_pixel >> 24) & 0xFF); //source
-            f32 s_r = dimming * (f32)((*img_pixel >> 16) & 0xFF); //NOTE: dimming also has to premultiply
-            f32 s_g = dimming * (f32)((*img_pixel >> 8) & 0xFF);
-            f32 s_b = dimming * (f32)((*img_pixel >> 0) & 0xFF);
-
-            f32 r_s_a = (s_a / 255.f)* dimming; //TODO(fran): add extra alpha reduction for every pixel CAlpha (handmade)
-
-            f32 d_a = (f32)((*pixel >> 24) & 0xFF); //dest
-            f32 d_r = (f32)((*pixel >> 16) & 0xFF); 
-            f32 d_g = (f32)((*pixel >> 8) & 0xFF);
-            f32 d_b = (f32)((*pixel >> 0) & 0xFF);
-
-            f32 r_d_a = d_a / 255.f;
-
-            //REMEMBER: handmade day 83, finally understanding what premultiplied alpha is and what it is used for
-
-            //TODO(fran): look at sean barrett's article on premultiplied alpha, remember: "non premultiplied alpha does not distribute over linear interpolation"
-
-            f32 rem_r_s_a = (1.f - r_s_a); //remaining alpha
-            f32 a = 255.f*(r_s_a + r_d_a - r_s_a*r_d_a ); //final premultiplication step (handmade day 83 min 1:23:00)
-            f32 r = rem_r_s_a * d_r + s_r;//NOTE: before premultiplied alpha we did f32 r = rem_r_s_a * d_r + r_s_a * s_r; now we dont need to multiply the source, it already comes premultiplied
-            f32 g = rem_r_s_a * d_g + s_g;
-            f32 b = rem_r_s_a * d_b + s_b;
-
-            *pixel = round_f32_to_i32(a)<<24 | round_f32_to_i32(r)<<16 | round_f32_to_i32(g)<<8 | round_f32_to_i32(b)<<0; //TODO(fran): should use round_f32_to_u32?
-
-            pixel++;
-            img_pixel++;
-        }
-        row += buf->pitch;
-        img_row += image->pitch; //NOTE: now Im starting to see the benefits of using pitch, very easy to change rows when you only have to display parts of the img
-    }
-
-}
-
-
-struct min_max_v2_f32 { v2_f32 min, max; }; //NOTE: game_coords means meters //TODO(fran): change to rc2
-min_max_v2_f32 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2_f32 camera_pixels, v2_f32 lower_left_pixels) {
-    v2_f32 min_pixels = { (game_coords.center.x - game_coords.radius.x) * meters_to_pixels, (game_coords.center.y + game_coords.radius.y) * meters_to_pixels };
-
-    v2_f32 min_pixels_camera = min_pixels - camera_pixels;
-
-    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-    v2_f32 min_pixels_camera_screen = { lower_left_pixels.x + min_pixels_camera.x , lower_left_pixels.y - min_pixels_camera.y };
-
-    v2_f32 max_pixels = { (game_coords.center.x + game_coords.radius.x) * meters_to_pixels, (game_coords.center.y - game_coords.radius.y) * meters_to_pixels };
-
-    v2_f32 max_pixels_camera = max_pixels - camera_pixels;
-
-    v2_f32 max_pixels_camera_screen = { lower_left_pixels.x + max_pixels_camera.x , lower_left_pixels.y - max_pixels_camera.y };
-
-    return { min_pixels_camera_screen , max_pixels_camera_screen };
-}
-
-rc2 transform_to_screen_coords(rc2 game_coords, game_state* gs) {
-    //TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
-    v2_f32 min_pixels = v2_f32{ game_coords.center.x - game_coords.radius.x , game_coords.center.y + game_coords.radius.y}*gs->word_meters_to_pixels;
-
-    v2_f32 min_pixels_camera = min_pixels - gs->camera;
-
-    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-    v2_f32 min_pixels_camera_screen = { gs->lower_left_pixels.x + min_pixels_camera.x , gs->lower_left_pixels.y - min_pixels_camera.y };
-
-    v2_f32 max_pixels = v2_f32{ game_coords.center.x + game_coords.radius.x , game_coords.center.y - game_coords.radius.y}*gs->word_meters_to_pixels;
-
-    v2_f32 max_pixels_camera = max_pixels - gs->camera;
-
-    v2_f32 max_pixels_camera_screen = { gs->lower_left_pixels.x + max_pixels_camera.x , gs->lower_left_pixels.y - max_pixels_camera.y };
-
-    return rc_min_max(min_pixels_camera_screen , max_pixels_camera_screen);
-}
-
-v2_f32 transform_to_screen_coords(v2_f32 game_coords, f32 meters_to_pixels, v2_f32 camera_pixels, v2_f32 lower_left_pixels) {
-    v2_f32 pixels = { game_coords.x * meters_to_pixels, game_coords.y * meters_to_pixels };
-
-    v2_f32 pixels_camera = pixels - camera_pixels;
-
-    //INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-    v2_f32 pixels_camera_screen = { lower_left_pixels.x + pixels_camera.x , lower_left_pixels.y - pixels_camera.y };
-
-    return pixels_camera_screen;
-}
-
-void render_char(img* buf, min_max_v2_f32 min_max, u8* bmp, int width, int height) { //TODO(fran): premultiplied alpha? and generalize img to img operation
+void render_char(img* buf, rc2 rect, u8* bmp, int width, int height) { //TODO(fran): premultiplied alpha? and generalize img to img operation
     //NOTE: stb creates top down img with 1 byte per pixel
-    v2_i32 min = { round_f32_to_i32(min_max.min.x), round_f32_to_i32(min_max.min.y) };
-    v2_i32 max = { round_f32_to_i32(min_max.max.x), round_f32_to_i32(min_max.max.y) };
+    v2_i32 min = { round_f32_to_i32(rect.get_min().x), round_f32_to_i32(rect.get_min().y) };
+    v2_i32 max = { round_f32_to_i32(rect.get_max().x), round_f32_to_i32(rect.get_max().y) };
 
     int offset_x = 0;
     int offset_y = 0;
@@ -277,59 +134,6 @@ void render_char(img* buf, min_max_v2_f32 min_max, u8* bmp, int width, int heigh
         row += buf->pitch;
         img_row += img_pitch; 
     }
-}
-
-
-void game_render_rectangle(img* buf, min_max_v2_f32 min_max, v4_f32 color) {
-    //The Rectangles are filled NOT including the final row/column
-    v2_i32 min = { round_f32_to_i32(min_max.min.x), round_f32_to_i32(min_max.min.y) };
-    v2_i32 max = { round_f32_to_i32(min_max.max.x), round_f32_to_i32(min_max.max.y) };
-
-    if (min.x < 0)min.x = 0;
-    if (min.y < 0)min.y = 0;
-    if (max.x > buf->width)max.x = buf->width;
-    if (max.y > buf->height)max.y = buf->height;
-
-    u32 col = (round_f32_to_i32(color.a * 255.f) << 24) |
-        (round_f32_to_i32(color.r * 255.f) << 16) |
-        (round_f32_to_i32(color.g * 255.f) << 8) |
-        round_f32_to_i32(color.b * 255.f);
-
-    u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
-    for (int y = min.y; y < max.y; y++) {
-        u32* pixel = (u32*)row;
-        for (int x = min.x; x < max.x; x++) {
-            //AARRGGBB
-            *pixel++ = col;
-        }
-        row += buf->pitch;//he does this instead of just incrementing each time in the x loop because of alignment things I dont care about now
-    }
-}
-void game_render_rectangle(img* buf, rc2 rect, v4_f32 color) {
-    min_max_v2_f32 m;
-    m.min = rect.get_min();
-    m.max = rect.get_max();
-    game_render_rectangle(buf, m, color);
-}
-
-void game_render_rectangle_boundary(img* buf, rc2 rc, v4_f32 color) {
-    //The Rectangles are filled NOT including the final row/column
-
-    f32 thickness = 2.f;
-
-    min_max_v2_f32 m;
-    m.min = rc.get_min();
-    m.max.x = m.min.x + thickness; m.max.y = rc.get_max().y;
-    game_render_rectangle(buf, m, color);//left
-    m.min = rc.get_min(); m.min.x += thickness;
-    m.max.x= rc.get_max().x - thickness; m.max.y = rc.get_min().y + thickness;//TODO(fran): here down is up again
-    game_render_rectangle(buf, m, color);//top
-    m.min.x = rc.get_min().x + thickness; m.min.y = rc.get_max().y - thickness;
-    m.max = rc.get_max(); m.max.x -= thickness;
-    game_render_rectangle(buf, m, color);//bottom
-    m.min.x = rc.get_max().x - thickness; m.min.y = rc.get_min().y;
-    m.max = rc.get_max();
-    game_render_rectangle(buf, m, color);//right
 }
 
 void game_add_entity(game_state* game_st, game_entity* new_entity) {
@@ -687,6 +491,8 @@ img make_word_background_image(game_state* gs, game_memory_arena* transient_aren
 
     //IMPORTANT TODO(fran): see handmade day 85 min 39, would it make sense to store the new images in a transient arena? if so what happens when the arena gets cleared, how do I know from the word's point of view, that it's img is no longer valid? should I instead create some structure (hash table, etc) that provides access to the imgs and is referenced say by the width and height of the img, if that combination is not present then I create it and enter the entry into the hash table, we could use a similar scheme to the one handmade hero plans in that episode, with the lru(least recently used) idea, we can predict, for example a limit of say 30 words at maximum visible in a single moment (note: he made a couple typos and initialized memory with the mem size instead of the pointer)
 
+    //TODO(fran): make this go through the pipeline, create a render_group here
+
     //draw corners
     i32 offsetx = 0;
     i32 offsety = 0;
@@ -790,7 +596,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
         gs->lower_left_pixels = { 0.f,(f32)frame_buf->height };
 
-        gs->word_meters_to_pixels = (f32)gs->word_height_pixels / gs->word_height_meters; //Transform from meters to pixels
+        gs->word_meters_to_pixels = (f32)gs->word_height_pixels / gs->word_height_meters; //Transform from meters to pixels //NOTE: basis change (same goes for flipping y)
 
         gs->word_pixels_to_meters = 1 / gs->word_meters_to_pixels;
 
@@ -884,7 +690,15 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //IDEA: what if the platform layer gave you scaling information, so you set up your render like you want and then the only thing that needs to change is scaling
 
     //Update & Render Prep Loop
-    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,Megabytes(1));
+    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,gs->lower_left_pixels,Megabytes(1));
+
+#if _DEBUG
+    clear(rg, v4_f32{ 1.f,0.f,1.f,1.f });
+    //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4_f32{ 1.f,0.f,1.f,0 });;
+#endif
+
+    v2_f32 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 }; //SUPERTODO: put camera in mtrs space !!!!!!!!!!!!!!!!!!!!!!!!
+    push_img(rg, gs->camera* gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters, &gs->DEBUG_background,true); //TODO(fran): add render order so I can put this guys at the end and pick the current camera pos, not the previous frame one
 
     for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) { //NOTE: remember to start from 1
         game_entity& e= gs->entities[entity_index];
@@ -957,64 +771,34 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
     }
 
-    //game_render_rectangle(frame_buf, { (f32)input->controller.mouse.x,(f32)input->controller.mouse.y }, {(f32)input->controller.mouse.x + 16, (f32)input->controller.mouse.y+16 }, player_color);
-
     img framebuffer;
     framebuffer.height = frame_buf->height;
     framebuffer.width = frame_buf->width;
     framebuffer.mem = frame_buf->mem;
     framebuffer.pitch = frame_buf->pitch;
 
-#if _DEBUG
-    game_render_rectangle(&framebuffer, min_max_v2_f32{ { (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height } }, v4_f32{ 1.f,0.f,1.f,0 });
-#endif
 
-    game_render_img_ignore_transparency(&framebuffer, { (f32)framebuffer.width/2 - gs->DEBUG_background.width / 2,(f32)framebuffer.height/2 - gs->DEBUG_background.height/2 } , &gs->DEBUG_background);
+    
+    
+
+    push_img(rg, gs->camera * gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters - v2_f32{ (f32)framebuffer.width/2.f-(f32)gs->DEBUG_menu.width / 2.f,(f32)framebuffer.height/2 - gs->DEBUG_menu.height / 2 }*gs->word_pixels_to_meters, &gs->DEBUG_menu);
+
+    v2_f32 mouse_pre_pos = (gs->camera * gs->word_pixels_to_meters + v2_f32_from_i32(framebuffer.width - gs->DEBUG_mouse.width - input->controller.mouse.x, framebuffer.height -gs->DEBUG_mouse.height - input->controller.mouse.y) * gs->word_pixels_to_meters);
+    f32 mousey = mouse_pre_pos.y;
+    f32 mousex = (gs->camera.x + input->controller.mouse.x) * gs->word_pixels_to_meters;
+
+    push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse);
+
+    //game_render_img_ignore_transparency(&framebuffer,  , &gs->DEBUG_background);
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
-    game_render_img(&framebuffer, { (f32)gs->DEBUG_menu.width/2.f,(f32)framebuffer.height - gs->DEBUG_menu.height/2 }, &gs->DEBUG_menu,.5f); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
+    //game_render_img(&framebuffer, , &gs->DEBUG_menu,.5f); //NOTE: it's pretty interesting that you can actually see information in the pixels with full alpha, the program that generates them does not put rgb to 0 so you can see "hidden" things
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
     //Render Loop
-    for (u32 base = 0; base < rg->push_buffer_used;) { //TODO(fran): use the basis, and define what is stored in meters and what in px
-        render_piece* piece = (render_piece*)(rg->push_buffer_base+base);
-        base += sizeof(render_piece);
-        rc2 rect = transform_to_screen_coords(rc_center_radius(piece->center, piece->radius), gs);
-        if (piece->image) {
-            rect.center -= piece->image->alignment_px;
-            game_render_img(&framebuffer, rect.center, piece->image);
-        }
-        else {
-            game_render_rectangle(&framebuffer, rect, piece->color);
-        }
-    }
+    output_render_group(rg,&framebuffer);
 
-    //Render Loop, TODO(fran): separate by entity type
-    //for (u32 i = 1; i < gs->entity_count; i++) {
-    //    game_entity* e = &gs->entities[i];
-    //    switch (e->type) {
-    //    case entity_word:
-        //{
-            //game_render_img(&framebuffer, transform_to_screen_coords(e->pos,gs->word_meters_to_pixels,gs->camera,gs->lower_left_pixels), &e->image); //TODO(fran): transform_to_screen_coords should only need the game_state passed
-        //    stbtt_fontinfo font;
-        //    int width, height; 
-        //    platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); //TODO(fran): fonts folder inside /assets
-        //    stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
-        //    u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), e->txt[0], &width, &height, 0, 0);
-        //    render_char(&framebuffer,
-        //        transform_to_screen_coords(rc_center_radius( e->pos , v2_f32{(f32)width/2.f,(f32)height/2.f}*gs->word_pixels_to_meters), 
-        //            gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels), bitmap, width, height);
-        //    platform_free_file_memory(f.mem);
-        //    stbtt_FreeBitmap(bitmap, 0);
-        //} break;
-        //}
-        //game_render_rectangle_boundary( //TODO(fran): change to render_bounding_box (just the borders) //TODO(fran): do at the end of each loop (bounding box should render above imgs)
-        //    &framebuffer,
-        //    transform_to_screen_coords(rc_center_radius(e->pos + e->collision.total_area.offset , e->collision.total_area.radius), gs),
-        //    e->color); //TODO(fran): iterate over all collision areas and render each one
-    //}
-
-    game_render_img(&framebuffer, { (f32)(input->controller.mouse.x - gs->DEBUG_mouse.alignment_px.x),(f32)(input->controller.mouse.y- gs->DEBUG_mouse.alignment_px.x) }, &gs->DEBUG_mouse);
+    //game_render_img(&framebuffer, { (f32)(input->controller.mouse.x - gs->DEBUG_mouse.alignment_px.x),(f32)(input->controller.mouse.y- gs->DEBUG_mouse.alignment_px.x) }, &gs->DEBUG_mouse);
 
     //Deletion Loop //TODO(fran): should deletion happen before render?
     for (u32 i = 1; i < gs->entity_count; i++) {
@@ -1045,6 +829,51 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
 
 
+
+//void game_render_rectangle_boundary(img* buf, rc2 rc, v4_f32 color) {
+//
+//    f32 thickness = 2.f;
+//
+//    min_max_v2_f32 m;
+//    m.min = rc.get_min();
+//    m.max.x = m.min.x + thickness; m.max.y = rc.get_max().y;
+//    game_render_rectangle(buf, m, color);//left
+//    m.min = rc.get_min(); m.min.x += thickness;
+//    m.max.x= rc.get_max().x - thickness; m.max.y = rc.get_min().y + thickness;//TODO(fran): here down is up again
+//    game_render_rectangle(buf, m, color);//top
+//    m.min.x = rc.get_min().x + thickness; m.min.y = rc.get_max().y - thickness;
+//    m.max = rc.get_max(); m.max.x -= thickness;
+//    game_render_rectangle(buf, m, color);//bottom
+//    m.min.x = rc.get_max().x - thickness; m.min.y = rc.get_min().y;
+//    m.max = rc.get_max();
+//    game_render_rectangle(buf, m, color);//right
+//}
+
+
+//Render Loop
+    //for (u32 i = 1; i < gs->entity_count; i++) {
+    //    game_entity* e = &gs->entities[i];
+    //    switch (e->type) {
+    //    case entity_word:
+        //{
+            //game_render_img(&framebuffer, transform_to_screen_coords(e->pos,gs->word_meters_to_pixels,gs->camera,gs->lower_left_pixels), &e->image); 
+        //    stbtt_fontinfo font;
+        //    int width, height; 
+        //    platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); 
+        //    stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
+        //    u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), e->txt[0], &width, &height, 0, 0);
+        //    render_char(&framebuffer,
+        //        transform_to_screen_coords(rc_center_radius( e->pos , v2_f32{(f32)width/2.f,(f32)height/2.f}*gs->word_pixels_to_meters), 
+        //            gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels), bitmap, width, height);
+        //    platform_free_file_memory(f.mem);
+        //    stbtt_FreeBitmap(bitmap, 0);
+        //} break;
+        //}
+        //game_render_rectangle_boundary(
+        //    &framebuffer,
+        //    transform_to_screen_coords(rc_center_radius(e->pos + e->collision.total_area.offset , e->collision.total_area.radius), gs),
+        //    e->color); 
+    //}
 
 
 /*
