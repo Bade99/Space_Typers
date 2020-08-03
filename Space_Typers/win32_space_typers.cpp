@@ -105,12 +105,6 @@ struct sound_output {
 
 #define rc_height(r) (r.bottom >= r.top ? r.bottom - r.top : r.top - r.bottom )
 
-#define Bytes(n) (n)
-#define Kilobytes(n) ((n)*1024)
-#define Megabytes(n) (Kilobytes(n)*1024)
-#define Gigabytes(n) (Megabytes(n)*1024LL)
-#define Terabytes(n) (Gigabytes(n)*1024LL)
-
 void ResizeFramebuffer(win32_framebuffer* buf, int width, int height) {
 
     if (buf->bytes) VirtualFree(buf->bytes, 0, MEM_RELEASE);
@@ -476,7 +470,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     LPVOID base_address = 0;
 #endif
     game_mem.permanent_storage_sz = Megabytes(1);
-    game_mem.transient_storage_sz = Megabytes(1);
+    game_mem.transient_storage_sz = Megabytes(4);
     u32 total_sz = game_mem.permanent_storage_sz + game_mem.transient_storage_sz;
     game_mem.permanent_storage = VirtualAlloc(base_address, total_sz, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE); //TODO(fran): use large pages
     game_mem.transient_storage = (u8*)game_mem.permanent_storage + game_mem.permanent_storage_sz;

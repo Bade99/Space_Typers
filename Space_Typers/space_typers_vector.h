@@ -98,3 +98,13 @@ struct v2_i32 {
 struct v3_i32 {
     i32 x, y, z;
 };
+
+//V4_F32
+union v4_f32 {
+    struct {
+        f32 x, y, z, w;
+    };
+    struct {
+        f32 r,g,b,a;
+    };
+};

@@ -18,8 +18,17 @@
 
 #include "space_typers_math.h"
 
+//TODO(fran): create separate h file with arena things? so I dont have to put this in the middle of here
+#define push_type(arena,type) (type*)_push_mem(arena,sizeof(type))
+
+#define push_arr(arena,type,count) (type*)_push_mem(arena,sizeof(type)*count)
+
+#define push_sz(arena,sz) _push_mem(arena,sz)
 
 #define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
+
+
+
 
 #define zero_struct(instance) zero_mem(&(instance),sizeof(instance))
 void zero_mem(void* ptr, u32 sz) {
@@ -29,15 +38,13 @@ void zero_mem(void* ptr, u32 sz) {
         *bytes++ = 0;
 }
 
-struct argb_f32 { f32 a, r, g, b; };
-
-
 #define IMG_BYTES_PER_PIXEL 4 //NOTE: there's one byte for each channel
 #define IMG_CHANNELS 4 //NOTE: all images are loaded and stored in rgba (maybe not that order)
 struct img {
     i32 width;
     i32 height;
     i32 pitch;
+    v2_f32 alignment_px; //NOTE: offset from the center of the img that moves its position
     void* mem;
 };
 
@@ -81,7 +88,7 @@ struct game_entity {
     v2_f32 pos;
     //v2_f32 radius;
     game_entity_collision_area_group collision;
-    argb_f32 color;
+    v4_f32 color;
     v2_f32 velocity;
     v2_f32 acceleration; //TODO: apply to every entity
     u32 flags;
@@ -141,11 +148,7 @@ void* _push_mem(game_memory_arena* arena, u32 sz) {
     void* res = arena->base + arena->used;
     arena->used += sz;
     return res;
-} //TODO(fran): set mem to zero? (not really necessary since we request the mem to be cleared to zero)
-
-#define push_type(arena,type) (type*)_push_mem(arena,sizeof(type))
-
-#define push_arr(arena,type,count) (type*)_push_mem(arena,sizeof(type)*count)
+} //TODO(fran): set mem to zero?
 
 struct game_world{
     game_stage* stages;
@@ -162,6 +165,12 @@ struct pairwise_collision_rule {
     pairwise_collision_rule* next_in_hash;
 };
 
+struct transient_state { //Anything allocated in the arena that contains this state can be destroyed at "any time" and reconstructed, but it'll live for as long as it can otherwise, aka does not get reset after each frame
+    bool is_initialized = false;
+    game_memory_arena transient_arena; //NOTE: transient does not necessarily mean it gets "destroyed" after each frame but that it can be thrown away at any time and the stuff inside regenerated
+
+};
+
 struct game_state {
     //int xoff;
     //int yoff;
@@ -173,7 +182,7 @@ struct game_state {
     v2_f32 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena permanent_arena;
-    game_memory_arena transient_arena; //NOTE: transient does not necessarily mean it gets "destroyed" after each frame but that it can be thrown away at any time and the stuff inside regenerated
+    game_memory_arena one_frame_arena;//gets reset at the end of each frame
 
     img DEBUG_background;
     img DEBUG_menu;
@@ -193,3 +202,4 @@ struct game_state {
 
 //TODO(fran): check what casey said about adding static to functions to reduce link/compilation time (explanation in day 53, min ~1:05:00)
 
+#include "space_typers_render_group.h"

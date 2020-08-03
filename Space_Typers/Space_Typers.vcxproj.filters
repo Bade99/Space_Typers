@@ -45,6 +45,9 @@
     <ClInclude Include="space_typers_rectangle.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="space_typers_render_group.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Space_Typers.rc">

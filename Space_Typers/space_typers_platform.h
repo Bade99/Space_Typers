@@ -18,6 +18,12 @@ typedef double f64;
 typedef wchar_t utf16;
 typedef char32_t utf32;//TODO(fran): use utf32?
 
+#define Bytes(n) (n)
+#define Kilobytes(n) ((n)*1024)
+#define Megabytes(n) (Kilobytes(n)*1024)
+#define Gigabytes(n) (Megabytes(n)*1024LL)
+#define Terabytes(n) (Gigabytes(n)*1024LL)
+
 #include "space_typers_vector.h" //TODO(fran): it's ugly to just have this guy here for v3_i32 in the controller, and we also have to put it after the typedefs
 
 struct game_memory { //We are gonna be taking the handmade hero route, to see how it goes and if it is something that I like when the thing gets complex

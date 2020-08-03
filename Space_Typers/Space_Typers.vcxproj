@@ -156,6 +156,7 @@
     <ClInclude Include="space_typers_math.h" />
     <ClInclude Include="space_typers_platform.h" />
     <ClInclude Include="space_typers_rectangle.h" />
+    <ClInclude Include="space_typers_render_group.h" />
     <ClInclude Include="space_typers_vector.h" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="stb_truetype.h" />
