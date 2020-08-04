@@ -57,18 +57,19 @@ img DEBUG_load_png(const char* filename) {
                 u32* img_pixel = (u32*)img_row;
                 for (int x = 0; x < res.width; x++) {
 
-                    f32 r = (f32)((*img_pixel & 0x000000FF)>>0);
-                    f32 g = (f32)((*img_pixel & 0x0000FF00)>>8);
-                    f32 b = (f32)((*img_pixel & 0x00FF0000)>>16);
-                    f32 a = (f32)((*img_pixel & 0xFF000000)>>24);//TODO(fran): I can just do >>24, check that it puts 0 in the bits left behind and not 1 (when most signif bit is 1)
-                    f32 a_n = a / 255.f;
+                    v4 texel = { (f32)((*img_pixel & 0x000000FF) >> 0),
+                                 (f32)((*img_pixel & 0x0000FF00) >> 8),
+                                 (f32)((*img_pixel & 0x00FF0000) >> 16),
+                                 (f32)((*img_pixel & 0xFF000000) >> 24) };//TODO(fran): I can just do >>24, check that it puts 0 in the bits left behind and not 1 (when most signif bit is 1)
+#if 1
+                    texel = srgb255_to_linear1(texel);
+                    
+                    texel.rgb *= texel.a;//premultiplying
 
-                    r = r * a_n; //premultiplying
-                    g = g * a_n; //premultiplying
-                    b = b * a_n; //premultiplying
-
+                    texel = linear1_to_srgb255(texel);
+#endif
                     //AARRGGBB
-                    *img_pixel++ = round_f32_to_u32(a) << 24 | round_f32_to_u32(r) << 16 | round_f32_to_u32(g) << 8 | round_f32_to_u32(b) << 0;
+                    *img_pixel++ = round_f32_to_u32(texel.a) << 24 | round_f32_to_u32(texel.r) << 16 | round_f32_to_u32(texel.g) << 8 | round_f32_to_u32(texel.b) << 0;
                 }
                 img_row += res.pitch; 
             }
@@ -787,8 +788,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     push_img(rg, gs->camera * gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters - v2{ (f32)framebuffer.width/2.f-(f32)gs->DEBUG_menu.width / 2.f,(f32)framebuffer.height/2 - gs->DEBUG_menu.height / 2 }*gs->word_pixels_to_meters, &gs->DEBUG_menu);
 
-    v2 mouse_pre_pos = (gs->camera * gs->word_pixels_to_meters + v2_from_i32(framebuffer.width - gs->DEBUG_mouse.width - input->controller.mouse.x, framebuffer.height -gs->DEBUG_mouse.height - input->controller.mouse.y) * gs->word_pixels_to_meters);
-    f32 mousey = mouse_pre_pos.y;
+    
+    f32 mousey = (gs->camera.y + framebuffer.height - gs->DEBUG_mouse.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
     f32 mousex = (gs->camera.x + input->controller.mouse.x) * gs->word_pixels_to_meters;
 
     push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse);
@@ -802,7 +803,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     v2 origin = screen_offset +10.f * v2{ sinf(gs->time) ,0};
     v2 x_axis = (100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
     v2 y_axis = perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
-    v4 color{0,1.f,0,0.5+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
+    v4 color{0,1.f,0,0.5f+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
     u32 idx = 0;
     render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->DEBUG_menu);
     for (f32 y = 0; y < 1.f; y += .25f)

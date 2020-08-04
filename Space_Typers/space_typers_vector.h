@@ -96,6 +96,64 @@ struct v2_i32 {
     i32 x, y;
 };
 
+//V3 (F32)
+struct v3 {
+    union {
+        struct {
+            f32 x, y, z;
+        };
+        struct {
+            f32 r, g, b;
+        };
+        f32 comp[3];
+    };
+
+    v3& operator+=(const v3& rhs);
+
+    v3& operator-=(const v3& rhs);
+
+    v3& operator*=(f32 rhs_scalar);
+};
+
+v3 operator*(v3 v, f32 scalar) {
+    v3 res;
+    res.x = v.x * scalar;
+    res.y = v.y * scalar;
+    res.z = v.z * scalar;
+    return res;
+}
+
+v3 operator-(v3 a, v3 b) {
+    v3 res;
+    res.x = a.x - b.x;
+    res.y = a.y - b.y;
+    res.z = a.z - b.z;
+    return res;
+}
+
+v3 operator+(v3 a, v3 b) {
+    v3 res;
+    res.x = a.x + b.x;
+    res.y = a.y + b.y;
+    res.z = a.z + b.z;
+    return res;
+}
+
+v3& v3::operator-=(const v3& rhs) {
+    *this = *this - rhs; //NOTE: remember to declare + - * ... before += -=, otherwise it will not find the functions
+    return *this;
+}
+
+v3& v3::operator+=(const v3& rhs) { //TODO(fran): is it necessary to use const& instead of a simple copy?
+    *this = *this + rhs;
+    return *this;
+}
+
+v3& v3::operator*=(f32 rhs_scalar) {
+    *this = *this * rhs_scalar;
+    return *this;
+}
+
 //V3_I32
 struct v3_i32 {
     i32 x, y, z;
@@ -109,6 +167,13 @@ union v4 {
     struct {
         f32 r,g,b,a;
     };
+    struct {
+        v3 rgb;
+        f32 a;
+    };
+    f32 comp[4];
+
+    v4& operator*=(f32 rhs_scalar);
 };
 
 v4 operator*(v4 v, f32 scalar) {
@@ -132,4 +197,9 @@ v4 operator+(v4 a, v4 b) {
     res.z = a.z + b.z;
     res.w = a.w + b.w;
     return res;
+}
+
+v4& v4::operator*=(f32 rhs_scalar) {
+    *this = *this * rhs_scalar;
+    return *this;
 }

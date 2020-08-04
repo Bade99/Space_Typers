@@ -17,18 +17,15 @@ struct render_group_entry_header {
 };
 
 struct render_entry_clear {
-	render_group_entry_header header;
 	v4 color;
 };
 struct render_entry_rectangle{
-	render_group_entry_header header;
 	render_basis basis;
 	rc2 rc;//NOTE: so I dont confuse it
 	v4 color;
 };
 
 struct render_entry_img {
-	render_group_entry_header header;
 	render_basis basis;
 	img* image;
 	v2 center;
@@ -38,7 +35,6 @@ struct render_entry_img {
 };
 
 struct render_entry_coordinate_system {
-	render_group_entry_header header;//NOTE: dont forget to add the header (or remove it and just put the type)
 	v2 origin;
 	v2 x_axis;
 	v2 y_axis;
@@ -123,10 +119,11 @@ render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixe
 //TODO(fran): neat trick but more annoying than anything else, now the enums are huge
 #define push_render_element(group,type) (type*)_push_render_element(group,sizeof(type),RenderGroupEntryType_##type)
 void* _push_render_element(render_group* group, u32 sz, render_group_entry_type type) {
+	sz += sizeof(render_group_entry_header);
 	game_assert(group->push_buffer_used+sz < group->max_push_buffer_sz);
-	render_group_entry_header* res = 0;
-	res = (render_group_entry_header*)(group->push_buffer_base + group->push_buffer_used);
-	res->type = type;
+	render_group_entry_header* header = (render_group_entry_header*)(group->push_buffer_base + group->push_buffer_used);
+	header->type = type;
+	void* res = header + 1;//NOTE: pointer arithmetic means this will be header + sizeof(*header)
 	group->push_buffer_used += sz;
 	return res;
 }
@@ -199,6 +196,28 @@ void game_render_rectangle(img* buf, rc2 rect, v4 color) {
 	}
 }
 
+v4 srgb255_to_linear1(v4 v) {
+	//Apply 2.2, aka 2, gamma correction
+	v4 res;
+	//NOTE: we assume alpha to be in linear space, probably it is
+	f32 inv255 = 1.f / 255.f;
+	res.r = squared(v.r * inv255);
+	res.g = squared(v.g * inv255);
+	res.b = squared(v.b * inv255);
+	res.a = v.a * inv255;
+	return res;
+}
+
+v4 linear1_to_srgb255(v4 v) {
+	v4 res;
+	//NOTE: we assume alpha to be in linear space, probably it is
+	res.r = square_root(v.r) * 255.f;
+	res.g = square_root(v.g) * 255.f;
+	res.b = square_root(v.b) * 255.f;
+	res.a = v.a * 255.f;
+	return res;
+}
+
 //NOTE: pos will be the center of the image
 void game_render_img(img* buf, v2 pos, img* image, f32 dimming = 1.f) { //NOTE: interesting idea: the thing that we read from and the thing that we write to are handled symmetrically (img-img)
 
@@ -229,31 +248,29 @@ void game_render_img(img* buf, v2 pos, img* image, f32 dimming = 1.f) { //NOTE: 
 			//AARRGGBB
 
 			//very slow linear blend
-			f32 s_a = (f32)((*img_pixel >> 24) & 0xFF); //source
-			f32 s_r = dimming * (f32)((*img_pixel >> 16) & 0xFF); //NOTE: dimming also has to premultiply
-			f32 s_g = dimming * (f32)((*img_pixel >> 8) & 0xFF);
-			f32 s_b = dimming * (f32)((*img_pixel >> 0) & 0xFF);
+			v4 texel = { (f32)((*img_pixel >> 16) & 0xFF), 
+						 (f32)((*img_pixel >> 8) & 0xFF),
+						 (f32)((*img_pixel >> 0) & 0xFF),
+						 (f32)((*img_pixel >> 24) & 0xFF) }; //source
+			texel = srgb255_to_linear1(texel);
+			texel *= dimming;//NOTE: dimming also has to premultiply
 
-			f32 r_s_a = (s_a / 255.f) * dimming;
+			v4 d = { (f32)((*pixel >> 16) & 0xFF),
+					 (f32)((*pixel >> 8) & 0xFF),
+					 (f32)((*pixel >> 0) & 0xFF),
+					 (f32)((*pixel >> 24) & 0xFF) }; //dest
 
-			f32 d_a = (f32)((*pixel >> 24) & 0xFF); //dest
-			f32 d_r = (f32)((*pixel >> 16) & 0xFF);
-			f32 d_g = (f32)((*pixel >> 8) & 0xFF);
-			f32 d_b = (f32)((*pixel >> 0) & 0xFF);
-
-			f32 r_d_a = d_a / 255.f;
+			d = srgb255_to_linear1(d);
 
 			//REMEMBER: handmade day 83, finally understanding what premultiplied alpha is and what it is used for
 
 			//TODO(fran): look at sean barrett's article on premultiplied alpha, remember: "non premultiplied alpha does not distribute over linear interpolation"
 
-			f32 rem_r_s_a = (1.f - r_s_a); //remaining alpha
-			f32 a = 255.f * (r_s_a + r_d_a - r_s_a * r_d_a); //final premultiplication step (handmade day 83 min 1:23:00)
-			f32 r = rem_r_s_a * d_r + s_r;//NOTE: before premultiplied alpha we did f32 r = rem_r_s_a * d_r + r_s_a * s_r; now we dont need to multiply the source, it already comes premultiplied
-			f32 g = rem_r_s_a * d_g + s_g;
-			f32 b = rem_r_s_a * d_b + s_b;
+			v4 res = (1.f - texel.a) * d + texel;
 
-			*pixel = round_f32_to_i32(a) << 24 | round_f32_to_i32(r) << 16 | round_f32_to_i32(g) << 8 | round_f32_to_i32(b) << 0; //TODO(fran): should use round_f32_to_u32?
+			res = linear1_to_srgb255(res);
+
+			*pixel = round_f32_to_i32(res.a) << 24 | round_f32_to_i32(res.r) << 16 | round_f32_to_i32(res.g) << 8 | round_f32_to_i32(res.b) << 0; //TODO(fran): should use round_f32_to_u32?
 
 			pixel++;
 			img_pixel++;
@@ -295,34 +312,9 @@ void game_render_img_ignore_transparency(img* buf, v2 pos, img* image) {
 
 }
 
-v4 srgb255_to_linear1(v4 v) {
-	//Apply 2.2, aka 2, gamma correction
-	v4 res;
-	//NOTE: we assume alpha to be in linear space, probably it is
-	f32 inv255 = 1.f / 255.f;
-	res.r = squared(v.r* inv255);
-	res.g = squared(v.g* inv255);
-	res.b = squared(v.b* inv255);
-	res.a = v.a* inv255;
-	return res;
-}
-
-v4 linear1_to_srgb255(v4 v) {
-	v4 res;
-	//NOTE: we assume alpha to be in linear space, probably it is
-	res.r = square_root(v.r) * 255.f;
-	res.g = square_root(v.g) * 255.f;
-	res.b = square_root(v.b) * 255.f;
-	res.a = v.a * 255.f;
-	return res;
-}
-
 void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture) {
 	//NOTE: handmade day 90 to 92
-	//u32 col = (round_f32_to_i32(color.a * 255.f) << 24) |
-	//		  (round_f32_to_i32(color.r * 255.f) << 16) |
-	//		  (round_f32_to_i32(color.g * 255.f) << 8) |
-	//		  (round_f32_to_i32(color.b * 255.f) << 0);
+	color.rgb *= color.a; //premultiplication for the color up front
 
 	i32 x_min= buf->width;
 	i32 x_max= 0;
@@ -409,34 +401,26 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 				u32 tex_c = *(u32*)(texel_ptr + texture->pitch);
 				u32 tex_d = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
 
-				v4 texel_a = {
-				(f32)((tex_a >> 16) & 0xFF),
-				(f32)((tex_a >> 8) & 0xFF),
-				(f32)((tex_a >> 0) & 0xFF),
-				(f32)((tex_a >> 24) & 0xFF),
-				};
-				v4 texel_b = {
-				(f32)((tex_b >> 16) & 0xFF),
-				(f32)((tex_b >> 8) & 0xFF),
-				(f32)((tex_b >> 0) & 0xFF),
-				(f32)((tex_b >> 24) & 0xFF),
-				};
-				v4 texel_c = {
-				(f32)((tex_c >> 16) & 0xFF),
-				(f32)((tex_c >> 8) & 0xFF),
-				(f32)((tex_c >> 0) & 0xFF),
-				(f32)((tex_c >> 24) & 0xFF),
-				};
-				v4 texel_d = {
-				(f32)((tex_d >> 16) & 0xFF),
-				(f32)((tex_d >> 8) & 0xFF),
-				(f32)((tex_d >> 0) & 0xFF),
-				(f32)((tex_d >> 24) & 0xFF),
-				};
+				v4 texel_a = { (f32)((tex_a >> 16) & 0xFF),
+							   (f32)((tex_a >> 8) & 0xFF),
+							   (f32)((tex_a >> 0) & 0xFF),
+							   (f32)((tex_a >> 24) & 0xFF) };
+				v4 texel_b = { (f32)((tex_b >> 16) & 0xFF),
+							   (f32)((tex_b >> 8) & 0xFF),
+							   (f32)((tex_b >> 0) & 0xFF),
+							   (f32)((tex_b >> 24) & 0xFF) };
+				v4 texel_c = { (f32)((tex_c >> 16) & 0xFF),
+							   (f32)((tex_c >> 8) & 0xFF),
+							   (f32)((tex_c >> 0) & 0xFF),
+							   (f32)((tex_c >> 24) & 0xFF) };
+				v4 texel_d = { (f32)((tex_d >> 16) & 0xFF),
+							   (f32)((tex_d >> 8) & 0xFF),
+							   (f32)((tex_d >> 0) & 0xFF),
+							   (f32)((tex_d >> 24) & 0xFF) };
 
 				//NOTE: gamma/space correction
 				//go from sRGB to "linear" brightness space
-				texel_a = srgb255_to_linear1(texel_a);
+				texel_a = srgb255_to_linear1(texel_a); //NOTE: colors are already premultiplied in linear space (when we load the imgs)
 				texel_b = srgb255_to_linear1(texel_b);
 				texel_c = srgb255_to_linear1(texel_c);
 				texel_d = srgb255_to_linear1(texel_d);
@@ -449,35 +433,32 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 #endif
 
 				//very slow linear blend
-				f32 r_s_a = texel.a * color.a;
+
+				//NOTE: this is the "shader" code
+				texel = hadamard(texel, color);
+				//
 
 				//NOTE: frambuffer is in sRGB space
-				v4 dest = {
-				(f32)((*pixel >> 16) & 0xFF),
-				(f32)((*pixel >> 8) & 0xFF),
-				(f32)((*pixel >> 0) & 0xFF),
-				(f32)((*pixel >> 24) & 0xFF)
-				};
+				v4 dest = { (f32)((*pixel >> 16) & 0xFF),
+							(f32)((*pixel >> 8) & 0xFF),
+							(f32)((*pixel >> 0) & 0xFF),
+							(f32)((*pixel >> 24) & 0xFF) };
 				dest = srgb255_to_linear1(dest);
-
-				f32 r_d_a = dest.a;
 
 				//REMEMBER: handmade day 83, finally understanding what premultiplied alpha is and what it is used for
 
 				//TODO(fran): look at sean barrett's article on premultiplied alpha, remember: "non premultiplied alpha does not distribute over linear interpolation"
 
-				f32 rem_r_s_a = (1.f - r_s_a); //remaining alpha
-				v4 blended = {
-				rem_r_s_a * dest.r + color.a*color.r*texel.r,//NOTE: before premultiplied alpha we did f32 r = rem_r_s_a * d_r + r_s_a * s_r; now we dont need to multiply the source, it already comes premultiplied
-				rem_r_s_a* dest.g + color.a * color.g * texel.g, //NOTE: color has to be multiplied by alpha to be premultiplied like the texel is
-				rem_r_s_a* dest.b + color.a * color.b * texel.b,
-				(r_s_a + r_d_a - r_s_a * r_d_a) //final premultiplication step (handmade day 83 min 1:23:00)
-				};
+				//(1.f - texel.a) == remaining alpha
+				v4 blended = (1.f - texel.a) * dest + texel;
+				//NOTE: before premultiplied alpha we did f32 r = rem_r_s_a * d_r + r_s_a * s_r; now we dont need to multiply the source, it already comes premultiplied
+				//NOTE: color has to be multiplied by alpha to be premultiplied like the texel is
+				//final premultiplication step (handmade day 83 min 1:23:00)
+
 				v4 blended255 = linear1_to_srgb255(blended);
 
 				*pixel = round_f32_to_i32(blended255.a) << 24 | round_f32_to_i32(blended255.r) << 16 | round_f32_to_i32(blended255.g) << 8 | round_f32_to_i32(blended255.b) << 0; //TODO(fran): should use round_f32_to_u32?
 
-				//*pixel = col;
 			}
 			pixel++;
 		}
@@ -488,18 +469,20 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 void output_render_group(render_group* rg, img* output_target) {
 	for (u32 base = 0; base < rg->push_buffer_used;) { //TODO(fran): use the basis, and define what is stored in meters and what in px
 		render_group_entry_header* header = (render_group_entry_header*)(rg->push_buffer_base + base);
+		base += sizeof(*header);
+		void* data = header + 1;
 		//NOTE: handmade day 89 introduced a set of common parts of every render_entry struct, we might do that too
 
 		switch (header->type) {
 		case RenderGroupEntryType_render_entry_clear:
 		{
-			render_entry_clear* entry = (render_entry_clear*)header;
+			render_entry_clear* entry = (render_entry_clear*)data;
 			game_render_rectangle(output_target, rc_min_max({ 0,0 }, v2_from_i32(output_target->width,output_target->height)), entry->color);
 			base += sizeof(*entry); //TODO(fran): annoying to have to remember to add this
 		} break;
 		case RenderGroupEntryType_render_entry_rectangle:
 		{
-			render_entry_rectangle* entry = (render_entry_rectangle*)header;
+			render_entry_rectangle* entry = (render_entry_rectangle*)data;
 			base += sizeof(*entry);
 
 			rc2 rect = transform_to_screen_coords(entry->rc, rg->meters_to_pixels,*rg->camera_pixels,rg->lower_left_pixels);
@@ -507,7 +490,7 @@ void output_render_group(render_group* rg, img* output_target) {
 		} break;
 		case RenderGroupEntryType_render_entry_img:
 		{
-			render_entry_img* entry = (render_entry_img*)header;
+			render_entry_img* entry = (render_entry_img*)data;
 			base += sizeof(*entry);
 
 			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
@@ -518,7 +501,7 @@ void output_render_group(render_group* rg, img* output_target) {
 		} break;
 		case RenderGroupEntryType_render_entry_coordinate_system:
 		{
-			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)header;
+			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)data;
 			base += sizeof(*entry);
 
 			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color, entry->texture);

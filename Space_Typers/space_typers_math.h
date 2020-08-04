@@ -66,7 +66,28 @@ v4 lerp(v4 n1, v4 n2, f32 t) {
 
 v2 hadamard(v2 a, v2 b) {
 	//Per component product
-	v2 res = { a.x * b.x, a.y * b.y };
+	v2 res;
+	res.x = a.x * b.x;
+	res.y = a.y * b.y;
+	return res;
+}
+
+v3 hadamard(v3 a, v3 b) {
+	//Per component product
+	v3 res;
+	res.x = a.x * b.x;
+	res.y = a.y * b.y;
+	res.z = a.z * b.z;
+	return res;
+}
+
+v4 hadamard(v4 a, v4 b) {
+	//Per component product
+	v4 res;
+	res.x = a.x * b.x;
+	res.y = a.y * b.y;
+	res.z = a.z * b.z;
+	res.w = a.w * b.w;
 	return res;
 }
 
