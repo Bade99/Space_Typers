@@ -119,3 +119,17 @@ v4 operator*(v4 v, f32 scalar) {
     res.w = v.w * scalar;
     return res;
 }
+
+v4 operator*(f32 scalar, v4 v) { //NOTE: waiting for C++20 where I think they let you define the operation only one way
+    v4 res = v * scalar;
+    return res;
+}
+
+v4 operator+(v4 a, v4 b) {
+    v4 res;
+    res.x = a.x + b.x;
+    res.y = a.y + b.y;
+    res.z = a.z + b.z;
+    res.w = a.w + b.w;
+    return res;
+}

@@ -50,7 +50,7 @@ img DEBUG_load_png(const char* filename) {
             //res.channels = channels;
             //res.bytes_per_channel = 1; //NOTE: this interface always assumes 8 bits per component
 
-            //NOTE: for premultiplied alpha to work we need to convert all our images to that "format", therefore this changes too
+            //NOTE: for premultiplied alpha to work we need to convert all our images to that "format" when loaded, therefore this changes too
 
             u8* img_row = (u8*)res.mem; //INFO: R and B values need to be swapped
             for (int y = 0; y < res.height; y++) {
@@ -288,7 +288,7 @@ bool entities_overlap(game_entity* entity, game_entity* test_entity) {
 void move_entity(game_entity* entity, v2 acceleration, game_state* gs, game_input* input) { //NOTE: im starting to feel the annoyance of const, everything that is used inside here (other functions for example) would have to get const'd as well, so out it went
     //rc2 e = rc_center_radius(entity->pos, entity->radius);
     
-    v2 pos_delta = .5f * acceleration * powf(input->dt_sec, 2.f) + entity->velocity * input->dt_sec;//NOTE: we'll start just checking a point
+    v2 pos_delta = .5f * acceleration * squared(input->dt_sec) + entity->velocity * input->dt_sec;//NOTE: we'll start just checking a point
     entity->velocity += acceleration * input->dt_sec;//TODO: where does this go? //NOTE: Casey put it here, it had it before calculating pos_delta
     
     //NOTE: day 67, min ~30 presents ideas on collision detection and the ways of operating on the entities that have responses/specific behaviours to collisions 
@@ -646,7 +646,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         
         gs->DEBUG_background = DEBUG_load_png("assets/img/stars.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_background.align = { 20,20 };
-        gs->DEBUG_menu = DEBUG_load_png("assets/img/down.png"); //TODO(fran): release mem DEBUG_unload_png();
+        gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_menu.align = { 20,20 };
         gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
         gs->DEBUG_mouse.alignment_px = v2_from_i32( -gs->DEBUG_mouse.width / 2,gs->DEBUG_mouse.height / 2 );
@@ -799,12 +799,12 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
-    v2 origin = screen_offset +30.f * v2{ 0,sinf(gs->time) };
-    v2 x_axis = (100.f+50.f*cosf(gs->time))*v2{cosf(gs->time),sinf(gs->time)};
-    v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
-    v4 color{0,1.f,0,1.f};
+    v2 origin = screen_offset +10.f * v2{ sinf(gs->time) ,0};
+    v2 x_axis = (100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
+    v2 y_axis = perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
+    v4 color{0,1.f,0,0.5+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
     u32 idx = 0;
-    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color);
+    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->DEBUG_menu);
     for (f32 y = 0; y < 1.f; y += .25f)
         for (f32 x = 0; x < 1.f; x += .25f)
             c->points[idx++] = {x,y};

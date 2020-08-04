@@ -44,6 +44,8 @@ struct render_entry_coordinate_system {
 	v2 y_axis;
 	v4 color;
 
+	img* texture;
+
 	v2 points[16];
 };
 
@@ -161,12 +163,13 @@ void clear(render_group* group, v4 color) {
 	p->color = color;
 }
 
-render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin, v2 x_axis, v2 y_axis, v4 color) {
+render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture) {
 	render_entry_coordinate_system* p = push_render_element(group, render_entry_coordinate_system); //TODO(fran): check we received a valid ptr?
 	p->origin = origin;
 	p->x_axis = x_axis;
 	p->y_axis = y_axis;
 	p->color = color;
+	p->texture = texture;
 	return p;
 }
 
@@ -231,7 +234,7 @@ void game_render_img(img* buf, v2 pos, img* image, f32 dimming = 1.f) { //NOTE: 
 			f32 s_g = dimming * (f32)((*img_pixel >> 8) & 0xFF);
 			f32 s_b = dimming * (f32)((*img_pixel >> 0) & 0xFF);
 
-			f32 r_s_a = (s_a / 255.f) * dimming; //TODO(fran): add extra alpha reduction for every pixel CAlpha (handmade)
+			f32 r_s_a = (s_a / 255.f) * dimming;
 
 			f32 d_a = (f32)((*pixel >> 24) & 0xFF); //dest
 			f32 d_r = (f32)((*pixel >> 16) & 0xFF);
@@ -292,12 +295,34 @@ void game_render_img_ignore_transparency(img* buf, v2 pos, img* image) {
 
 }
 
-void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color) {
+v4 srgb255_to_linear1(v4 v) {
+	//Apply 2.2, aka 2, gamma correction
+	v4 res;
+	//NOTE: we assume alpha to be in linear space, probably it is
+	f32 inv255 = 1.f / 255.f;
+	res.r = squared(v.r* inv255);
+	res.g = squared(v.g* inv255);
+	res.b = squared(v.b* inv255);
+	res.a = v.a* inv255;
+	return res;
+}
+
+v4 linear1_to_srgb255(v4 v) {
+	v4 res;
+	//NOTE: we assume alpha to be in linear space, probably it is
+	res.r = square_root(v.r) * 255.f;
+	res.g = square_root(v.g) * 255.f;
+	res.b = square_root(v.b) * 255.f;
+	res.a = v.a * 255.f;
+	return res;
+}
+
+void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture) {
 	//NOTE: handmade day 90 to 92
-	u32 col = (round_f32_to_i32(color.a * 255.f) << 24) |
-			  (round_f32_to_i32(color.r * 255.f) << 16) |
-			  (round_f32_to_i32(color.g * 255.f) << 8) |
-			  (round_f32_to_i32(color.b * 255.f) << 0);
+	//u32 col = (round_f32_to_i32(color.a * 255.f) << 24) |
+	//		  (round_f32_to_i32(color.r * 255.f) << 16) |
+	//		  (round_f32_to_i32(color.g * 255.f) << 8) |
+	//		  (round_f32_to_i32(color.b * 255.f) << 0);
 
 	i32 x_min= buf->width;
 	i32 x_max= 0;
@@ -306,10 +331,10 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color) 
 
 	v2 points[4] = { origin,origin + x_axis,origin + y_axis,origin + x_axis + y_axis };
 	for (v2 p : points) {
-		i32 floorx=floorf(p.x);
-		i32 ceilx=ceilf(p.x);
-		i32 floory=floorf(p.y);
-		i32 ceily=ceilf(p.y);
+		i32 floorx=(i32)floorf(p.x);
+		i32 ceilx= (i32)ceilf(p.x);
+		i32 floory= (i32)floorf(p.y);
+		i32 ceily= (i32)ceilf(p.y);
 
 		if (x_min > floorx)x_min = floorx;
 		if (y_min > floory)y_min = floory;
@@ -324,6 +349,21 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color) 
 
 	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
 
+
+	//NOTE on pixel art rendering (handmade 93 1:07:00): possible solutions:
+	// -pixel shader, check pixels that fall between more than one texel and operate differently on them
+	// -multisampling (msaa)
+	// -manual pre-upsampling
+
+	//NOTE: handmade 94 very intersting talk about gamma and how by not taking that into account you are actually not working on "brightness" space (eg sRGB) but in some other space entirely that is linear, which is wrong for how we perceive brightness changes
+	//artist(srgb) -> math (convert to linear for modification and back to non linear for output) -> monitor(srgb)
+	//artist -> srgb to linear -> math -> linear to srgb -> monitor
+	//normal transform is to square by 2.2, since we want performance we gonna cheat and use 2 as the power, pretty close
+	//NOTE 2: day 94 again, really good, the framebuffer needs to have a defined color space too, and using linear is dificult cause we'd need 16bits per channel since we are no longer placing most of the real info where it belongs, on the darker colors, now it is evenly distributed, which means we have too much resolution for bright areas and too little for dark ones
+
+	//TODO(fran): read https://fgiesen.wordpress.com/category/graphics-pipeline/
+	//TODO(fran): read https://www.slideshare.net/naughty_dog/lighting-shading-by-john-hable
+
 	for (int y = y_min; y < y_max; y++) {
 		u32* pixel = (u32*)row;
 		for (int x = x_min; x < x_max; x++) {
@@ -333,12 +373,112 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color) 
 			//NOTE: you compute the normal for each edge and then check whether the point gets projected in the negative regime, which means that it is "behind the normal" or better behind the edge, aka inside the surface
 			//NOTE: this requires orthogonal axes
 			v2 p = v2_from_i32( x,y );
-			if(dot(p-origin,-perp(x_axis))<0 && //bottom edge
-			   dot(p - (origin +x_axis)/*NOTE:you line it up to the right edge of the rectangle, you create a point the passes through that line*/, -perp(y_axis)/*NOTE: remember that the perp may point to the other side (right hand rule)*/)<0 &&//right edge
-			   dot(p - (origin+x_axis+y_axis),perp(x_axis))<0 &&//top edge //NOTE: you can also just use y_axis, cause all you need to do is "line up" the point with the line
-			   dot(p - (origin+y_axis),perp(y_axis))<0 //left edge //NOTE: same here, you can just use origin
-				)
-				*pixel = col;
+			v2 d = p - origin;
+			if (dot(d, -perp(x_axis)) < 0 && //bottom edge
+				dot(d - x_axis, //NOTE:you line it up to the right edge of the rectangle, you create a point the passes through that line
+					-perp(y_axis)) < 0 //NOTE: remember that the perp may point to the other side (right hand rule)
+				&&//right edge
+				dot(d - x_axis - y_axis, perp(x_axis)) < 0 &&//top edge //NOTE: you can also just use y_axis, cause all you need to do is "line up" the point with the line
+				dot(d - y_axis, perp(y_axis)) < 0 ) //left edge //NOTE: same here, you can just use origin
+			{
+				f32 inv_x_axis_lenght_sq = 1.f / lenght_sq(x_axis);
+				f32 inv_y_axis_lenght_sq = 1.f / lenght_sq(y_axis);
+
+				f32 u = dot(d, x_axis) * inv_x_axis_lenght_sq; //Texture mapping
+				f32 v = dot(d, y_axis) * inv_y_axis_lenght_sq;
+
+				game_assert(u >= 0 && u <= 1.f);
+				game_assert(v >= 0 && v <= 1.f);
+
+				f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
+				f32 t_y = v * (f32)(texture->height - 2);
+
+				i32 x = (i32)t_x;
+				i32 y = (i32)t_y;
+
+				f32 f_x = t_x - (f32)x;
+				f32 f_y = t_y - (f32)y;
+
+				game_assert(x >= 0 && x < texture->width);
+				game_assert(y >= 0 && y < texture->height);
+
+				u8* texel_ptr = ((u8*)texture->mem + y * texture->pitch + x * IMG_BYTES_PER_PIXEL);
+				//NOTE: Bilinear filtering
+				u32 tex_a = *(u32*)texel_ptr; //NOTE: For a better blend we pick the colors around the texel, movement is much smoother
+				u32 tex_b = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
+				u32 tex_c = *(u32*)(texel_ptr + texture->pitch);
+				u32 tex_d = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
+
+				v4 texel_a = {
+				(f32)((tex_a >> 16) & 0xFF),
+				(f32)((tex_a >> 8) & 0xFF),
+				(f32)((tex_a >> 0) & 0xFF),
+				(f32)((tex_a >> 24) & 0xFF),
+				};
+				v4 texel_b = {
+				(f32)((tex_b >> 16) & 0xFF),
+				(f32)((tex_b >> 8) & 0xFF),
+				(f32)((tex_b >> 0) & 0xFF),
+				(f32)((tex_b >> 24) & 0xFF),
+				};
+				v4 texel_c = {
+				(f32)((tex_c >> 16) & 0xFF),
+				(f32)((tex_c >> 8) & 0xFF),
+				(f32)((tex_c >> 0) & 0xFF),
+				(f32)((tex_c >> 24) & 0xFF),
+				};
+				v4 texel_d = {
+				(f32)((tex_d >> 16) & 0xFF),
+				(f32)((tex_d >> 8) & 0xFF),
+				(f32)((tex_d >> 0) & 0xFF),
+				(f32)((tex_d >> 24) & 0xFF),
+				};
+
+				//NOTE: gamma/space correction
+				//go from sRGB to "linear" brightness space
+				texel_a = srgb255_to_linear1(texel_a);
+				texel_b = srgb255_to_linear1(texel_b);
+				texel_c = srgb255_to_linear1(texel_c);
+				texel_d = srgb255_to_linear1(texel_d);
+
+				//REMEMBER: good to know what to test with, he set up a sprite moving slowly from left to right to see the effect better, and also then a simple rotation
+#if 1
+				v4 texel = lerp(lerp(texel_a,texel_b,f_x),lerp(texel_c,texel_d,f_x),f_y);
+#else 
+				v4 texel = texel_a;
+#endif
+
+				//very slow linear blend
+				f32 r_s_a = texel.a * color.a;
+
+				//NOTE: frambuffer is in sRGB space
+				v4 dest = {
+				(f32)((*pixel >> 16) & 0xFF),
+				(f32)((*pixel >> 8) & 0xFF),
+				(f32)((*pixel >> 0) & 0xFF),
+				(f32)((*pixel >> 24) & 0xFF)
+				};
+				dest = srgb255_to_linear1(dest);
+
+				f32 r_d_a = dest.a;
+
+				//REMEMBER: handmade day 83, finally understanding what premultiplied alpha is and what it is used for
+
+				//TODO(fran): look at sean barrett's article on premultiplied alpha, remember: "non premultiplied alpha does not distribute over linear interpolation"
+
+				f32 rem_r_s_a = (1.f - r_s_a); //remaining alpha
+				v4 blended = {
+				rem_r_s_a * dest.r + color.a*color.r*texel.r,//NOTE: before premultiplied alpha we did f32 r = rem_r_s_a * d_r + r_s_a * s_r; now we dont need to multiply the source, it already comes premultiplied
+				rem_r_s_a* dest.g + color.a * color.g * texel.g, //NOTE: color has to be multiplied by alpha to be premultiplied like the texel is
+				rem_r_s_a* dest.b + color.a * color.b * texel.b,
+				(r_s_a + r_d_a - r_s_a * r_d_a) //final premultiplication step (handmade day 83 min 1:23:00)
+				};
+				v4 blended255 = linear1_to_srgb255(blended);
+
+				*pixel = round_f32_to_i32(blended255.a) << 24 | round_f32_to_i32(blended255.r) << 16 | round_f32_to_i32(blended255.g) << 8 | round_f32_to_i32(blended255.b) << 0; //TODO(fran): should use round_f32_to_u32?
+
+				//*pixel = col;
+			}
 			pixel++;
 		}
 		row += buf->pitch;
@@ -381,7 +521,7 @@ void output_render_group(render_group* rg, img* output_target) {
 			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)header;
 			base += sizeof(*entry);
 
-			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color*.5f);
+			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color, entry->texture);
 			
 			v2 center = entry->origin;
 			v2 radius = { 2,2 };

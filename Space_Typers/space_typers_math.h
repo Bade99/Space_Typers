@@ -60,6 +60,10 @@ v2 lerp(v2 n1, v2 n2, f32 t) {
 	return (1.f - t) * n1 + t * n2;
 }
 
+v4 lerp(v4 n1, v4 n2, f32 t) {
+	return (1.f - t) * n1 + t * n2;
+}
+
 v2 hadamard(v2 a, v2 b) {
 	//Per component product
 	v2 res = { a.x * b.x, a.y * b.y };
@@ -124,5 +128,15 @@ v2 perp(v2 v) {//generate orthogonal vector
 	v2 res; 
 	res.x = -v.y;
 	res.y = v.x;
+	return res;
+}
+
+f32 squared(f32 n) {
+	f32 res = n * n;
+	return res;
+}
+
+f32 square_root(f32 n) {
+	f32 res = sqrtf(n);
 	return res;
 }
