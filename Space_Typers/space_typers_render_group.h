@@ -341,6 +341,11 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 
 	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
 
+	//NOTE: Subsurface Scattering reduced explanation handmade day 96 27:00
+
+	//NOTE: Ambient Occlusion handmade day 96 1:25:00
+	// -not a real physical thing, just a hack to kind of reproduce real occlusion of light cause of objects in between you and the source
+	// -ssao (screen space)
 
 	//NOTE on pixel art rendering (handmade 93 1:07:00): possible solutions:
 	// -pixel shader, check pixels that fall between more than one texel and operate differently on them
