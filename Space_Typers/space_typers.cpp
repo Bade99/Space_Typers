@@ -630,7 +630,11 @@ img make_sphere_normal_map(game_memory_arena* arena,i32 width, i32 height, f32 r
             //NOTE: this is correct for the x and y positive of the circle (y is down)
             v2 n = uv * 2.f - v2{ 1.f,1.f };//[-1,1]
             f32 root_term = 1.f - squared(n.x) - squared(n.y);
+#if 0
             v3 normal{ 0,0,1 };
+#else 
+            v3 normal{ 0,-.7071067811865475f,-.7071067811865475f };
+#endif
             f32 nz = 0;
             if (root_term >= 0) {
                 nz = square_root(root_term);
@@ -798,6 +802,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         ts->env_map_width = 512;
         ts->env_map_height = 256;
         ts->TEST_env_map = make_test_env_map(&ts->transient_arena, ts->env_map_width, ts->env_map_height, { 1.f,0,0,1.f });
+        ts->TEST_env_map.LOD[0] = gs->DEBUG_background;//REMOVE: now thats pretty nice
         //TODO: we can add more data structures to the transient state
         //for example a hash table for the background imgs for the words, lets see if in the same level similar background sizes are used, then we could reduce memory space by reusing the background, at the cost of some performance at the time of searching for the img
     }
@@ -926,12 +931,13 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
-    v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,0};
-    v2 x_axis = { 256,0 };//(100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
+    v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,2*cos(gs->time) };
+    v2 x_axis = (1.25 + .25 * cosf(gs->time))* v2{ 256,0 };//(100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
     v2 y_axis = perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
     v4 color{0,1.f,0,0.5f+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
 
-    push_img(rg, {2,5}, &ts->TEST_env_map.LOD[0]);
+    //push_img(rg, {2,5}, &ts->TEST_env_map.LOD[0]);
+    render_entry_coordinate_system* lod = push_coord_system(rg, { 200,800 }, v2{ (f32)ts->TEST_env_map.LOD[0].width/6,0 }, { 0,(f32)ts->TEST_env_map.LOD[0].height / 6 }, color, &ts->TEST_env_map.LOD[0], 0, 0);
 
     environment_map* env_map = &ts->TEST_env_map;
 

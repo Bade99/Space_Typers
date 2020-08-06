@@ -388,13 +388,20 @@ v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sampl
 
 	//if (sample_direction.y < 0) return { 0,0,0 };
 
-	game_assert(sample_direction.y>0)
+	//game_assert(sample_direction.y>0)
 
 	f32 z_distance = 1.f;//meters //distance from the map
+#if 0
 	f32 meters_to_uv = .01f;
-	f32 c = (z_distance*meters_to_uv) / sample_direction.y; //The env map is positioned in the same place as the player, so we have to move in z to reach it //we compute how many Zs enter into the distance to the env map //TODO(fran): isnt that wrong, since z_distance is going straight and z also has the offset from x and y?
+	f32 c = (z_distance*meters_to_uv) / sample_direction.y; //TODO(fran): isnt that wrong, since z_distance is going straight and z also has the offset from x and y?
 	v2 offset = c * v2{ sample_direction.x,sample_direction.z };
-
+#else
+	f32 meters_to_uv = .03f;
+	f32 c = (z_distance * meters_to_uv) / sample_direction.z; //The env map is positioned in the same place as the player, so we have to move in z to reach it //we compute how many Zs enter into the distance to the env map 
+	v2 offset = c * v2{ sample_direction.x,sample_direction.y };
+	//if ((squared(sample_direction.x) + squared(sample_direction.y))>squared(1.f)  ) return { 0,0,0 };
+	//if (fabs(sample_direction.z) < .05f) return{ 0,0,0 };
+#endif
 	v2 uv = screen_space_uv + offset;
 
 	uv.x = clamp01(uv.x);//avoid sampling outside the texture
@@ -578,6 +585,9 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 					v3 bounce = 2.f * normal.z * normal.xyz;//simplification from -e+2*dot(e,N)*N
 					bounce.z -= 1;
 
+					//NOTE: handmade 98 1:07:00 bump map explanation
+					
+#if 0
 					environment_map* farmap = 0;
 					f32 tenvmap = bounce.y;
 					f32 tfarmap = 0;
@@ -590,20 +600,19 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 						farmap = &env_map[0];//top
 						tfarmap = 2.f * (tenvmap - .5f);
 					}
-					v3 lightcolor = { 0,0,0 };
+					v3 reflection_color = { 0,0,0 };
 					if (farmap) {
 						v3 farmapcolor = sample_environment_map(farmap, screen_space_uv, bounce, normal.w);
-						lightcolor = lerp(lightcolor, farmapcolor, tfarmap);
+						reflection_color = lerp(reflection_color, farmapcolor, tfarmap);
 					}
-					
+#else				
 
-					//if (bounce.y < 0) bounce.y = -bounce.y;
+					v3 reflection_color;
+					if (env_map) reflection_color = sample_environment_map(env_map, screen_space_uv, bounce, normal.w);
+					else reflection_color = { 0,0,0 };
+#endif
 
-					//NOTE: handmade 98 1:07:00 bump map explanation
-					//v3 reflection_color;
-					//if (env_map) reflection_color = sample_environment_map(env_map, screen_space_uv, bounce, normal.w);
-					//else reflection_color = { 0,0,0 };
-					texel.rgb += texel.a* lightcolor;
+					texel.rgb += texel.a* reflection_color;
 					texel.r = clamp01(texel.r);
 					texel.g = clamp01(texel.g);
 					texel.b = clamp01(texel.b);
