@@ -73,17 +73,6 @@ v2& v2::operator*=(f32 rhs_scalar) {
     return *this;
 }
 
-f32 dot(v2 a, v2 b) {
-    f32 res = a.x * b.x + a.y * b.y;
-    return res;
-}
-
-f32 lenght_sq(v2 v) {
-    f32 res;
-    res = dot(v, v);
-    return res;
-}
-
 v2 v2_from_i32(i32 x, i32 y) {
     v2 res;
     res.x = (f32)x;
@@ -103,6 +92,10 @@ struct v3 {
             f32 x, y, z;
         };
         struct {
+            v2 xy;
+            f32 z;
+        };
+        struct {
             f32 r, g, b;
         };
         f32 comp[3];
@@ -115,11 +108,32 @@ struct v3 {
     v3& operator*=(f32 rhs_scalar);
 };
 
+v3 operator/(v3 v, f32 scalar) {
+    v3 res;
+    res.x = v.x / scalar;
+    res.y = v.y / scalar;
+    res.z = v.z / scalar;
+    return res;
+}
+
+v3 operator-(v3 v) {
+    v3 res;
+    res.x = -v.x;
+    res.y = -v.y;
+    res.z = -v.z;
+    return res;
+}
+
 v3 operator*(v3 v, f32 scalar) {
     v3 res;
     res.x = v.x * scalar;
     res.y = v.y * scalar;
     res.z = v.z * scalar;
+    return res;
+}
+
+v3 operator*(f32 scalar, v3 v) {
+    v3 res = v * scalar;
     return res;
 }
 
@@ -165,6 +179,10 @@ union v4 {
         f32 x, y, z, w;
     };
     struct {
+        v3 xyz;
+        f32 w;
+    };
+    struct {
         f32 r,g,b,a;
     };
     struct {
@@ -202,4 +220,13 @@ v4 operator+(v4 a, v4 b) {
 v4& v4::operator*=(f32 rhs_scalar) {
     *this = *this * rhs_scalar;
     return *this;
+}
+
+v4 operator/(v4 v, f32 scalar) {
+    v4 res;
+    res.x = v.x / scalar;
+    res.y = v.y / scalar;
+    res.z = v.z / scalar;
+    res.w = v.w / scalar;
+    return res;
 }

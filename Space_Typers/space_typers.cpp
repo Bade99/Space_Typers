@@ -563,8 +563,127 @@ game_entity create_word(game_state* gs, game_memory_arena* transient_arena, v2 p
     return word;
 }
 
+//i8 bilateral_f32_to_i8(f32 n) {
+//    f32 res;
+//    if (n >= 0) res = n * 127;
+//    else res = n * 128;
+//    return (i8)res;
+//}
+#if 0
+img make_sphere_normal_map(game_memory_arena* arena, i32 width, i32 height, f32 Roughness=0.f)
+{
+    img res = make_empty_img(arena, width, height);
+    img* Bitmap = &res;
+    f32 InvWidth = 1.0f / (f32)(Bitmap->width - 1);
+    f32 InvHeight = 1.0f / (f32)(Bitmap->height - 1);
+
+    u8* Row = (u8*)Bitmap->mem;
+
+    for (i32 Y = 0;
+        Y < Bitmap->height;
+        ++Y)
+    {
+        u32* Pixel = (u32*)Row;
+        for (i32 X = 0;
+            X < Bitmap->width;
+            ++X)
+        {
+            v2 BitmapUV = { InvWidth * (f32)X, InvHeight * (f32)Y };
+
+            f32 Nx = (2.0f * BitmapUV.x - 1.0f);
+            f32 Ny = (2.0f * BitmapUV.y - 1.0f);
+
+            f32 RootTerm = 1.0f - Nx * Nx - Ny * Ny;
+            v3 Normal = { 0, 0.707106781188f, 0.707106781188f };
+            f32 Nz = 0.0f;
+            if (RootTerm >= 0.0f)
+            {
+                Nz = square_root(RootTerm);
+                Normal = v3{ Nx, Ny, Nz };
+            }
+
+            v4 Color = { 255.0f * (0.5f * (Normal.x + 1.0f)),
+                        255.0f * (0.5f * (Normal.y + 1.0f)),
+                        255.0f * (0.5f * (Normal.z + 1.0f)),
+                        255.0f * Roughness };
+
+            *Pixel++ = (((u32)(Color.a + 0.5f) << 24) |
+                ((u32)(Color.r + 0.5f) << 16) |
+                ((u32)(Color.g + 0.5f) << 8) |
+                ((u32)(Color.b + 0.5f) << 0));
+        }
+        Row += Bitmap->pitch;
+    }
+    return res;
+}
+#else
+img make_sphere_normal_map(game_memory_arena* arena,i32 width, i32 height, f32 roughness = 0.f) {
+    img res = make_empty_img(arena, width, height);
+    f32 inv_width = 1.f / (f32)(width-1);
+    f32 inv_height = 1.f / (f32)(height-1);
+    u8* row = (u8*)res.mem;
+    for (i32 y = 0; y < width; y++) { //TODO(fran): im drawing top down
+        u32* pixel = (u32*)row;
+        for (i32 x = 0; x < height; x++) {
+            //AARRGGBB
+            v2 uv = { (f32)x * inv_width, (f32)y * inv_height }; //[0,1]
+            //NOTE: this is correct for the x and y positive of the circle (y is down)
+            v2 n = uv * 2.f - v2{ 1.f,1.f };//[-1,1]
+            f32 root_term = 1.f - squared(n.x) - squared(n.y);
+            v3 normal{ 0,0,1 };
+            f32 nz = 0;
+            if (root_term >= 0) {
+                nz = square_root(root_term);
+                normal = { n.x,n.y,nz };
+            }
+            //NOTE: I like this concept of creating your own conversions, I was trying to use i8 to have positive and negative but casey made it simpler by storing u8 and converting to f32 [-1,1]
+            v3 color = ((normal + v3{ 1,1,1 }) *.5f )*255.f;//[0,255]
+
+            //NOTE: NEVER use signed integers when working with bytes, when you do shifts it retains the sign and fucks up the whole 32 bits
+            *pixel++ = (u8)(roughness * 255.f) << 24 | (u8)round_f32_to_u32(color.r) << 16 | (u8)round_f32_to_u32(color.g) << 8 | (u8)round_f32_to_u32(color.b) << 0;
+        }
+        row += res.pitch;
+    }
+    return res;
+}
+#endif
+
+u32 color_v4_to_u32(v4 color) {
+    color *= 255.f;
+    u32 res = round_f32_to_i32(color.a) << 24 | round_f32_to_i32(color.r) << 16 | round_f32_to_i32(color.g) << 8 | round_f32_to_i32(color.b) << 0;
+    return res;
+}
+
+environment_map make_test_env_map(game_memory_arena* arena, i32 width, i32 height, v4 color) {
+    color.rgb *= color.a;
+    environment_map res;
+    for (i32 idx = 0; idx < arr_count(res.LOD); idx++) {
+        res.LOD[idx] = make_empty_img(arena, width, height);
+        img* map = &res.LOD[idx];
+
+        bool row_checker_on = true;
+        i32 checker_width = 16;
+        i32 checker_height = 16;
+        for (i32 y = 0; y < map->height; y+=checker_height) { //TODO(fran): im drawing top down
+            bool checker_on = row_checker_on;
+            for (i32 x = 0; x < map->width; x+=checker_width) {
+                v4 c = checker_on ? color : v4{0, 0, 0, 1};
+                v2 min = v2_from_i32(x, y);
+                v2 max = min + v2{(f32)checker_width, (f32)checker_height};
+                game_render_rectangle(map,rc_min_max(min,max),c);
+                checker_on = !checker_on;
+            }
+            row_checker_on = !row_checker_on;
+        }
+
+        width /= 2;
+        height /= 2;
+    }
+    return res;
+}
+
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
-    
+
     //BIG TODO(fran): game_add_entity can no longer copy the game_entity, that would mean it uses the collision areas stored in the saved entity (it's fine for now, until we need to apply some transformation to collision areas)
     
     //TODO(fran): add rgba to v3 and v4, and add xy yz zw, etc union accessors
@@ -588,7 +707,11 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //IDEA: I see the walls candy-like red with scrolling diagonal white lines
 
+    //IDEA: screen presents a word in some random position, after n seconds fades to black, then again screen "unfades" and shows a new word in some other position, and so on, the player has to write the word/sentence before the screen turns completely black
+
     if (!memory->is_initialized) {
+        memory->is_initialized = true; //TODO(fran): should the platform layer do this?
+
         //game_st->hz = 256;
         game_entity null_entity{ 0 };
         null_entity.type = entity_null; //NOTE: just in case
@@ -645,7 +768,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             level2.entities[2] = level2_word_spawner;
         }
         
-        gs->DEBUG_background = DEBUG_load_png("assets/img/stars.png"); //TODO(fran): release mem DEBUG_unload_png();
+        gs->DEBUG_background = DEBUG_load_png("assets/img/background.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_background.align = { 20,20 };
         gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_menu.align = { 20,20 };
@@ -656,17 +779,25 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
         gs->word_inside = DEBUG_load_png("assets/img/word_inside.png");
 
+
         gs->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
 
         game_initialize_entities(gs, gs->world.stages[0].lvls[gs->world.stages[0].current_lvl]);
 
-        memory->is_initialized = true; //TODO(fran): should the platform layer do this?
     }
 
     game_assert(sizeof(transient_state) <= memory->transient_storage_sz);
     transient_state* ts = (transient_state*)memory->transient_storage;
     if (!ts->is_initialized) {
+        ts->is_initialized = true;
         initialize_arena(&ts->transient_arena, (u8*)memory->transient_storage + sizeof(transient_state), ((memory->transient_storage_sz - sizeof(transient_state))/2));
+
+        gs->test_diffuse = make_empty_img(&ts->transient_arena,256, 256);
+        game_render_rectangle(&gs->test_diffuse, rc_min_max({ 0,0 }, v2_from_i32( gs->test_diffuse.width,gs->test_diffuse.height)), {.5f,.5f,.5f,1});
+        gs->sphere_normal = make_sphere_normal_map(&ts->transient_arena, gs->test_diffuse.width, gs->test_diffuse.height);
+        ts->env_map_width = 512;
+        ts->env_map_height = 256;
+        ts->TEST_env_map = make_test_env_map(&ts->transient_arena, ts->env_map_width, ts->env_map_height, { 1.f,0,0,1.f });
         //TODO: we can add more data structures to the transient state
         //for example a hash table for the background imgs for the words, lets see if in the same level similar background sizes are used, then we could reduce memory space by reusing the background, at the cost of some performance at the time of searching for the img
     }
@@ -697,13 +828,11 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //Update & Render Prep Loop
     render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,gs->lower_left_pixels,Megabytes(1));
 
-#if _DEBUG
-    clear(rg, v4{ 1.f,0.f,1.f,1.f });
+    clear(rg, v4{ .25f,.25f,.25f,1.f });
     //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4{ 1.f,0.f,1.f,0 });;
-#endif
 
     v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 }; //SUPERTODO: put camera in mtrs space !!!!!!!!!!!!!!!!!!!!!!!!
-    push_img(rg, gs->camera* gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters, &gs->DEBUG_background,true); //TODO(fran): add render order so I can put this guys at the end and pick the current camera pos, not the previous frame one
+    //push_img(rg, gs->camera* gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters, &gs->DEBUG_background,true); //TODO(fran): add render order so I can put this guys at the end and pick the current camera pos, not the previous frame one
 
     for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) { //NOTE: remember to start from 1
         game_entity& e= gs->entities[entity_index];
@@ -783,9 +912,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     framebuffer.pitch = frame_buf->pitch;
 
 
-    
-    
-
     push_img(rg, gs->camera * gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters - v2{ (f32)framebuffer.width/2.f-(f32)gs->DEBUG_menu.width / 2.f,(f32)framebuffer.height/2 - gs->DEBUG_menu.height / 2 }*gs->word_pixels_to_meters, &gs->DEBUG_menu);
 
     
@@ -800,12 +926,17 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
-    v2 origin = screen_offset +10.f * v2{ sinf(gs->time) ,0};
-    v2 x_axis = (100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
+    v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,0};
+    v2 x_axis = { 256,0 };//(100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
     v2 y_axis = perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
     v4 color{0,1.f,0,0.5f+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
+
+    push_img(rg, {2,5}, &ts->TEST_env_map.LOD[0]);
+
+    environment_map* env_map = &ts->TEST_env_map;
+
+    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->test_diffuse, &gs->sphere_normal,&ts->TEST_env_map);
     u32 idx = 0;
-    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->DEBUG_menu);
     for (f32 y = 0; y < 1.f; y += .25f)
         for (f32 x = 0; x < 1.f; x += .25f)
             c->points[idx++] = {x,y};

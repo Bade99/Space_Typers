@@ -2,7 +2,9 @@
 
 #include "space_typers_platform.h"
 
-#if _DEBUG //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
+#define ASSERTIONS
+
+#ifdef ASSERTIONS //TODO(fran): change to my own flag and set it with each compiler's flags, or even simpler just let the user set the flag
 #define game_assert(expression) if(!(expression)){*(int*)0=0;}
 #else
 #define game_assert(expression) 
@@ -150,12 +152,14 @@ void* _push_mem(game_memory_arena* arena, u32 sz) {
     return res;
 } //TODO(fran): set mem to zero?
 
+
 struct game_world{
     game_stage* stages;
     u32 stage_count;
     u32 current_stage;
 };
 
+#include "space_typers_render_group.h"
 
 struct pairwise_collision_rule {
     game_entity* a;
@@ -169,6 +173,9 @@ struct transient_state { //Anything allocated in the arena that contains this st
     bool is_initialized = false;
     game_memory_arena transient_arena; //NOTE: transient does not necessarily mean it gets "destroyed" after each frame but that it can be thrown away at any time and the stuff inside regenerated
 
+    i32 env_map_width;
+    i32 env_map_height;
+    environment_map TEST_env_map;
 };
 
 struct game_state {
@@ -188,6 +195,9 @@ struct game_state {
     img DEBUG_menu;
     img DEBUG_mouse;
 
+    img sphere_normal;
+    img test_diffuse;
+
     img word_corner;
     img word_border;
     img word_inside;
@@ -204,4 +214,3 @@ struct game_state {
 
 //TODO(fran): check what casey said about adding static to functions to reduce link/compilation time (explanation in day 53, min ~1:05:00)
 
-#include "space_typers_render_group.h"

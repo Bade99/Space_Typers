@@ -34,6 +34,11 @@ struct render_entry_img {
 	bool IGNOREALPHA; //HACK: get rid of this once we have optimized the renderer, I just use it to be able to render the background img without destroying performance
 };
 
+//NOTE: LOD[0] is the highest resolution LOD
+struct environment_map {
+	img LOD[4];
+};
+
 struct render_entry_coordinate_system {
 	v2 origin;
 	v2 x_axis;
@@ -41,6 +46,9 @@ struct render_entry_coordinate_system {
 	v4 color;
 
 	img* texture;
+	img* normal_map;
+
+	environment_map* env_map;
 
 	v2 points[16];
 };
@@ -57,23 +65,23 @@ struct render_group {
 	u32 max_push_buffer_sz;
 };
 
-rc2 transform_to_screen_coords(rc2 game_coords, game_state* gs) {
-	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
-	v2 min_pixels = v2{ game_coords.center.x - game_coords.radius.x , game_coords.center.y + game_coords.radius.y }*gs->word_meters_to_pixels;
-
-	v2 min_pixels_camera = min_pixels - gs->camera;
-
-	//INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-	v2 min_pixels_camera_screen = { gs->lower_left_pixels.x + min_pixels_camera.x , gs->lower_left_pixels.y - min_pixels_camera.y };
-
-	v2 max_pixels = v2{ game_coords.center.x + game_coords.radius.x , game_coords.center.y - game_coords.radius.y }*gs->word_meters_to_pixels;
-
-	v2 max_pixels_camera = max_pixels - gs->camera;
-
-	v2 max_pixels_camera_screen = { gs->lower_left_pixels.x + max_pixels_camera.x , gs->lower_left_pixels.y - max_pixels_camera.y };
-
-	return rc_min_max(min_pixels_camera_screen, max_pixels_camera_screen);
-}
+//rc2 transform_to_screen_coords(rc2 game_coords, game_state* gs) {
+//	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
+//	v2 min_pixels = v2{ game_coords.center.x - game_coords.radius.x , game_coords.center.y + game_coords.radius.y }*gs->word_meters_to_pixels;
+//
+//	v2 min_pixels_camera = min_pixels - gs->camera;
+//
+//	//INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
+//	v2 min_pixels_camera_screen = { gs->lower_left_pixels.x + min_pixels_camera.x , gs->lower_left_pixels.y - min_pixels_camera.y };
+//
+//	v2 max_pixels = v2{ game_coords.center.x + game_coords.radius.x , game_coords.center.y - game_coords.radius.y }*gs->word_meters_to_pixels;
+//
+//	v2 max_pixels_camera = max_pixels - gs->camera;
+//
+//	v2 max_pixels_camera_screen = { gs->lower_left_pixels.x + max_pixels_camera.x , gs->lower_left_pixels.y - max_pixels_camera.y };
+//
+//	return rc_min_max(min_pixels_camera_screen, max_pixels_camera_screen);
+//}
 
 rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera_pixels, v2 lower_left_pixels) {
 	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
@@ -160,13 +168,15 @@ void clear(render_group* group, v4 color) {
 	p->color = color;
 }
 
-render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture) {
+render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture, img* normal_map,environment_map* env_map) {
 	render_entry_coordinate_system* p = push_render_element(group, render_entry_coordinate_system); //TODO(fran): check we received a valid ptr?
 	p->origin = origin;
 	p->x_axis = x_axis;
 	p->y_axis = y_axis;
 	p->color = color;
 	p->texture = texture;
+	p->normal_map = normal_map;
+	p->env_map = env_map;
 	return p;
 }
 
@@ -180,10 +190,10 @@ void game_render_rectangle(img* buf, rc2 rect, v4 color) {
 	if (max.x > buf->width)max.x = buf->width;
 	if (max.y > buf->height)max.y = buf->height;
 
-	u32 col = (round_f32_to_i32(color.a * 255.f) << 24) |
-		(round_f32_to_i32(color.r * 255.f) << 16) |
-		(round_f32_to_i32(color.g * 255.f) << 8) |
-		round_f32_to_i32(color.b * 255.f);
+	u32 col = (round_f32_to_u32(color.a * 255.f) << 24) |
+		(round_f32_to_u32(color.r * 255.f) << 16) |
+		(round_f32_to_u32(color.g * 255.f) << 8) |
+		round_f32_to_u32(color.b * 255.f);
 
 	u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
 	for (int y = min.y; y < max.y; y++) {
@@ -196,6 +206,38 @@ void game_render_rectangle(img* buf, rc2 rect, v4 color) {
 	}
 }
 
+v4 unpack_4x8(u32 packed) {
+	v4 res = { (f32)((packed >> 16) & 0xFF),
+			   (f32)((packed >> 8) & 0xFF),
+			   (f32)((packed >> 0) & 0xFF),
+			   (f32)((packed >> 24) & 0xFF) };
+	return res;
+}
+
+struct bilinear_sample {
+	v4 texel00;
+	v4 texel01;
+	v4 texel10;
+	v4 texel11;
+};
+
+bilinear_sample sample_bilinear(img* texture, i32 x, i32 y) {
+	u8* texel_ptr = ((u8*)texture->mem + y * texture->pitch + x * IMG_BYTES_PER_PIXEL);
+
+	u32 tex_a = *(u32*)texel_ptr; //NOTE: For a better blend we pick the colors around the texel, movement is much smoother
+	u32 tex_b = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
+	u32 tex_c = *(u32*)(texel_ptr + texture->pitch);
+	u32 tex_d = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
+
+	bilinear_sample res;
+
+	res.texel00 = unpack_4x8(tex_a);
+	res.texel01 = unpack_4x8(tex_b);
+	res.texel10 = unpack_4x8(tex_c);
+	res.texel11 = unpack_4x8(tex_d);
+	return res;
+}
+
 v4 srgb255_to_linear1(v4 v) {
 	//Apply 2.2, aka 2, gamma correction
 	v4 res;
@@ -205,6 +247,15 @@ v4 srgb255_to_linear1(v4 v) {
 	res.g = squared(v.g * inv255);
 	res.b = squared(v.b * inv255);
 	res.a = v.a * inv255;
+	return res;
+}
+
+bilinear_sample srgb255_to_linear1(bilinear_sample b) {
+	bilinear_sample res;
+	res.texel00 = srgb255_to_linear1(b.texel00);
+	res.texel01 = srgb255_to_linear1(b.texel01);
+	res.texel10 = srgb255_to_linear1(b.texel10);
+	res.texel11 = srgb255_to_linear1(b.texel11);
 	return res;
 }
 
@@ -270,7 +321,7 @@ void game_render_img(img* buf, v2 pos, img* image, f32 dimming = 1.f) { //NOTE: 
 
 			res = linear1_to_srgb255(res);
 
-			*pixel = round_f32_to_i32(res.a) << 24 | round_f32_to_i32(res.r) << 16 | round_f32_to_i32(res.g) << 8 | round_f32_to_i32(res.b) << 0; //TODO(fran): should use round_f32_to_u32?
+			*pixel = round_f32_to_u32(res.a) << 24 | round_f32_to_u32(res.r) << 16 | round_f32_to_u32(res.g) << 8 | round_f32_to_u32(res.b) << 0; //TODO(fran): should use round_f32_to_u32?
 
 			pixel++;
 			img_pixel++;
@@ -312,7 +363,87 @@ void game_render_img_ignore_transparency(img* buf, v2 pos, img* image) {
 
 }
 
-void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture) {
+//NOTE: goes from [0,255] to [-1,1]
+v4 unscale_and_bias_normal(v4 normal) //TODO(fran): I dont like this name at all
+{
+	v4 res;
+	f32 inv255 = 1.f / 255.f;
+
+	res.x = 2.f * (normal.x * inv255) - 1.f;
+	res.y = 2.f * (normal.y * inv255) - 1.f;
+	res.z = 2.f * (normal.z * inv255) - 1.f;
+
+	res.w = inv255 * normal.w;
+
+	return res;
+}
+
+//NOTE: handmade 99 1:15:00 simple explanation of saturation
+
+v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sample_direction/*aka the bounce*/, f32 roughness) {
+	img* LOD = &env_map->LOD[0];//TODO(fran): use roughness to pick LOD level
+
+	//NOTE: handmade 100 8:00 explanation of the direction of the eye vector and other light/normal related things
+	//REMEMBER: you shoot to the eye, the eye doesnt shoot, it does not produce light, just receives (the eye vector goes to the eye, NOT from)
+
+	//if (sample_direction.y < 0) return { 0,0,0 };
+
+	game_assert(sample_direction.y>0)
+
+	f32 z_distance = 1.f;//meters //distance from the map
+	f32 meters_to_uv = .01f;
+	f32 c = (z_distance*meters_to_uv) / sample_direction.y; //The env map is positioned in the same place as the player, so we have to move in z to reach it //we compute how many Zs enter into the distance to the env map //TODO(fran): isnt that wrong, since z_distance is going straight and z also has the offset from x and y?
+	v2 offset = c * v2{ sample_direction.x,sample_direction.z };
+
+	v2 uv = screen_space_uv + offset;
+
+	uv.x = clamp01(uv.x);//avoid sampling outside the texture
+	uv.y = clamp01(uv.y);
+
+	f32 t_x = uv.x * (f32)(LOD->width - 2);
+	f32 t_y = uv.y * (f32)(LOD->height - 2);
+
+	i32 i_x = (i32)t_x;
+	i32 i_y = (i32)t_y;
+
+	f32 f_x = t_x - (f32)i_x;
+	f32 f_y = t_y - (f32)i_y;
+
+	game_assert(i_x >= 0 && i_x < LOD->width);
+	game_assert(i_y >= 0 && i_y < LOD->height);
+
+	bilinear_sample sample = sample_bilinear(LOD, i_x, i_y);
+	sample = srgb255_to_linear1(sample);
+	v3 res = lerp(lerp(sample.texel00, sample.texel01, f_x), lerp(sample.texel10, sample.texel11, f_x), f_y).xyz;
+
+	return res;
+
+	/* My nonsensical attempt
+	v3 eye = { 0,0,-1 };
+	v3 bounce = eye - 2.f * dot(eye, normal)*normal;
+	f32 z_distance = 1.f;
+
+	f32 angle = acosf(dot(-eye, bounce)/(lenght(eye)*lenght(bounce)));
+
+	f32 hipotenuse = z_distance / cosf(angle);
+
+	f32 x = cosf(angle) * hipotenuse;
+	f32 y = sinf(angle) * hipotenuse;
+
+	v2 uv = { x / LOD->width, y / LOD->height };
+
+	v2 final_uv = screen_space_uv + uv;
+
+	final_uv.x = clamp01(final_uv.x);
+	final_uv.y = clamp01(final_uv.y);
+	u8* ptr = ((u8*)LOD->mem) + (u32)(final_uv.y*(LOD->height-1)) * LOD->pitch + (u32)(final_uv.x*(LOD->width-1)) * IMG_BYTES_PER_PIXEL;
+	v4 texel = unpack_4x8(*ptr) / 255.f;
+	return texel.rgb;
+	*/
+}
+
+//TODO(fran): Im pretty sure I have a bug with alpha premult or gamma correction
+void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture, img* normal_map, environment_map* env_map) {
 	//NOTE: handmade day 90 to 92
 	color.rgb *= color.a; //premultiplication for the color up front
 
@@ -390,64 +521,105 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 				f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
 				f32 t_y = v * (f32)(texture->height - 2);
 
-				i32 x = (i32)t_x;
-				i32 y = (i32)t_y;
+				i32 i_x = (i32)t_x;
+				i32 i_y = (i32)t_y;
 
-				f32 f_x = t_x - (f32)x;
-				f32 f_y = t_y - (f32)y;
+				f32 f_x = t_x - (f32)i_x;
+				f32 f_y = t_y - (f32)i_y;
 
-				game_assert(x >= 0 && x < texture->width);
-				game_assert(y >= 0 && y < texture->height);
+				game_assert(i_x >= 0 && i_x < texture->width);
+				game_assert(i_y >= 0 && i_y < texture->height);
 
-				u8* texel_ptr = ((u8*)texture->mem + y * texture->pitch + x * IMG_BYTES_PER_PIXEL);
-				//NOTE: Bilinear filtering
-				u32 tex_a = *(u32*)texel_ptr; //NOTE: For a better blend we pick the colors around the texel, movement is much smoother
-				u32 tex_b = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
-				u32 tex_c = *(u32*)(texel_ptr + texture->pitch);
-				u32 tex_d = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
-
-				v4 texel_a = { (f32)((tex_a >> 16) & 0xFF),
-							   (f32)((tex_a >> 8) & 0xFF),
-							   (f32)((tex_a >> 0) & 0xFF),
-							   (f32)((tex_a >> 24) & 0xFF) };
-				v4 texel_b = { (f32)((tex_b >> 16) & 0xFF),
-							   (f32)((tex_b >> 8) & 0xFF),
-							   (f32)((tex_b >> 0) & 0xFF),
-							   (f32)((tex_b >> 24) & 0xFF) };
-				v4 texel_c = { (f32)((tex_c >> 16) & 0xFF),
-							   (f32)((tex_c >> 8) & 0xFF),
-							   (f32)((tex_c >> 0) & 0xFF),
-							   (f32)((tex_c >> 24) & 0xFF) };
-				v4 texel_d = { (f32)((tex_d >> 16) & 0xFF),
-							   (f32)((tex_d >> 8) & 0xFF),
-							   (f32)((tex_d >> 0) & 0xFF),
-							   (f32)((tex_d >> 24) & 0xFF) };
+				//NOTE: Bilinear filtering  //NOTE: For a better blend we pick the colors around the texel, movement is much smoother
+				bilinear_sample sample = sample_bilinear(texture, i_x , i_y);
 
 				//NOTE: gamma/space correction
 				//go from sRGB to "linear" brightness space
-				texel_a = srgb255_to_linear1(texel_a); //NOTE: colors are already premultiplied in linear space (when we load the imgs)
-				texel_b = srgb255_to_linear1(texel_b);
-				texel_c = srgb255_to_linear1(texel_c);
-				texel_d = srgb255_to_linear1(texel_d);
+				//NOTE: colors are already premultiplied in linear space (when we load the imgs)
+				sample = srgb255_to_linear1(sample);
 
 				//REMEMBER: good to know what to test with, he set up a sprite moving slowly from left to right to see the effect better, and also then a simple rotation
 #if 1
-				v4 texel = lerp(lerp(texel_a,texel_b,f_x),lerp(texel_c,texel_d,f_x),f_y);
+				v4 texel = lerp(lerp(sample.texel00,sample.texel01,f_x),lerp(sample.texel10,sample.texel11,f_x),f_y); //TODO(fran): join sample_bilinear, srgb255_to_linear1 and the lerp together into one function, I often forget to apply some of those three
 #else 
 				v4 texel = texel_a;
 #endif
 
+#if 0
+				int WidthMax = buf->width - 1;
+				f32 InvWidthMax = 1.0f / (f32)WidthMax;
+				int HeightMax = buf->height - 1;
+				f32 InvHeightMax = 1.0f / (f32)HeightMax;
+				f32 OriginY = (origin + 0.5f * x_axis + 0.5f * y_axis).y;
+				f32 FixedCastY = InvHeightMax * OriginY;
+				v2 screen_space_uv = { InvWidthMax * (f32)x, FixedCastY };
+#else
+				v2 screen_space_uv = { (f32)x / (f32)(buf->width-1), (f32)y / (f32)(buf->height-1) }; //REMEMBER IMPORTANT OH GOD: CONVERT INTEGERS TO FLOAT, I took me 2 hours to find this bug, INTEGER DIVIDE I HATE U
+#endif
+
+				if (normal_map) {
+					//f32 n_x = u * (f32)(normal_map->width - 2);
+					//f32 n_y = v * (f32)(normal_map->height - 2);
+
+					//i32 i_n_x = (i32)n_x;
+					//i32 i_n_y = (i32)n_y;
+
+					//f32 f_n_x = n_x - (f32)i_n_x;
+					//f32 f_n_y = n_y - (f32)i_n_y;
+
+					bilinear_sample normal_sample = sample_bilinear(normal_map, (i32)t_x, (i32)t_y);
+					v4 normal = lerp(lerp(normal_sample.texel00, normal_sample.texel01,f_x),lerp(normal_sample.texel10, normal_sample.texel11,f_x),f_y); //TODO(fran): shouldnt we renormalize after lerp?
+					normal = unscale_and_bias_normal(normal);//converts to [-1,1]
+
+					//NOTE: normal gets de-normalized after lerping, we should renormalize after unscale_and_bias though we might not need to for the sample_env_amp
+					normal.xyz = normalize(normal.xyz);
+					
+					//v3 vector_to_eye = { 0,0,1 }; //points straight off the screen to the player //NOTE: the fact that this doesnt change allows for optimizations, we can simply do:
+					v3 bounce = 2.f * normal.z * normal.xyz;//simplification from -e+2*dot(e,N)*N
+					bounce.z -= 1;
+
+					environment_map* farmap = 0;
+					f32 tenvmap = bounce.y;
+					f32 tfarmap = 0;
+					if (tenvmap < -.5f) {
+						farmap = &env_map[0];//bottom
+						tfarmap = -1 - 2.f * tenvmap;
+						bounce.y = -bounce.y;
+					}
+					else if (tenvmap > .5f) {
+						farmap = &env_map[0];//top
+						tfarmap = 2.f * (tenvmap - .5f);
+					}
+					v3 lightcolor = { 0,0,0 };
+					if (farmap) {
+						v3 farmapcolor = sample_environment_map(farmap, screen_space_uv, bounce, normal.w);
+						lightcolor = lerp(lightcolor, farmapcolor, tfarmap);
+					}
+					
+
+					//if (bounce.y < 0) bounce.y = -bounce.y;
+
+					//NOTE: handmade 98 1:07:00 bump map explanation
+					//v3 reflection_color;
+					//if (env_map) reflection_color = sample_environment_map(env_map, screen_space_uv, bounce, normal.w);
+					//else reflection_color = { 0,0,0 };
+					texel.rgb += texel.a* lightcolor;
+					texel.r = clamp01(texel.r);
+					texel.g = clamp01(texel.g);
+					texel.b = clamp01(texel.b);
+				}
+
 				//very slow linear blend
 
 				//NOTE: this is the "shader" code
+#if 0
 				texel = hadamard(texel, color);
+#endif
 				//
 
 				//NOTE: frambuffer is in sRGB space
-				v4 dest = { (f32)((*pixel >> 16) & 0xFF),
-							(f32)((*pixel >> 8) & 0xFF),
-							(f32)((*pixel >> 0) & 0xFF),
-							(f32)((*pixel >> 24) & 0xFF) };
+				v4 dest = unpack_4x8(*pixel);
+
 				dest = srgb255_to_linear1(dest);
 
 				//REMEMBER: handmade day 83, finally understanding what premultiplied alpha is and what it is used for
@@ -497,7 +669,6 @@ void output_render_group(render_group* rg, img* output_target) {
 		{
 			render_entry_img* entry = (render_entry_img*)data;
 			base += sizeof(*entry);
-
 			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
 			game_assert(entry->image);
 			pos -= entry->image->alignment_px;
@@ -509,7 +680,7 @@ void output_render_group(render_group* rg, img* output_target) {
 			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)data;
 			base += sizeof(*entry);
 
-			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color, entry->texture);
+			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color, entry->texture, entry->normal_map, entry->env_map);
 			
 			v2 center = entry->origin;
 			v2 radius = { 2,2 };

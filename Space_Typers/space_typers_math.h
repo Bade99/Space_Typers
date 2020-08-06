@@ -60,6 +60,10 @@ v2 lerp(v2 n1, v2 n2, f32 t) {
 	return (1.f - t) * n1 + t * n2;
 }
 
+v3 lerp(v3 n1, v3 n2, f32 t) {
+	return (1.f - t) * n1 + t * n2;
+}
+
 v4 lerp(v4 n1, v4 n2, f32 t) {
 	return (1.f - t) * n1 + t * n2;
 }
@@ -124,7 +128,7 @@ f32 safe_ratio1(f32 numerator, f32 divisor) {
 f32 clamp(f32 min, f32 n, f32 max) {
 	f32 res=n;
 	if (res < min) res = min;
-	else if (res > min) res = max;
+	else if (res > max) res = max;
 	return res;
 }
 
@@ -159,5 +163,37 @@ f32 squared(f32 n) {
 
 f32 square_root(f32 n) {
 	f32 res = sqrtf(n);
+	return res;
+}
+
+f32 dot(v3 a, v3 b) {
+	f32 res = a.x * b.x + a.y * b.y + a.z * b.z;
+	return res;
+}
+
+f32 dot(v2 a, v2 b) {
+	f32 res = a.x * b.x + a.y * b.y;
+	return res;
+}
+
+f32 lenght_sq(v2 v) {
+	f32 res;
+	res = dot(v, v);
+	return res;
+}
+
+f32 lenght_sq(v3 v) {
+	f32 res;
+	res = dot(v, v);
+	return res;
+}
+
+f32 lenght(v3 v) {
+	f32 res = sqrtf(lenght_sq(v));
+	return res;
+}
+
+v3 normalize(v3 v) {
+	v3 res = v / lenght(v); //TODO(fran): beware of division by zero
 	return res;
 }
