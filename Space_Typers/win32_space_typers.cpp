@@ -489,8 +489,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     int game_update_hz = 30;
 
     bool sound_is_valid = false;
-
-#if _DEBUG
+#define _DEVELOPER
+#ifdef _DEVELOPER
     bool pause = false;
 #endif
 
@@ -541,7 +541,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                     else if (vkcode == VK_ESCAPE) { //TODO(fran): we should also have keys that only activate for one frame after pressed, not waiting for the key_up
                         win32_process_digital_button(&new_input.controller.back, is_down);
                     }
-#if _DEBUG
+#ifdef _DEVELOPER
                     else if (vkcode == 'P') {
                         if (is_down) pause = !pause;
                     }
@@ -564,7 +564,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             DispatchMessage(&msg); //TODO(fran): disable windows' erase background, when we resize the entire screen turns to the background color
         }
 
-#if _DEBUG
+#ifdef _DEVELOPER
         if(pause) continue;
 #endif
         POINT mouse_pos;

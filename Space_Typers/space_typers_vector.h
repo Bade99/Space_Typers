@@ -183,6 +183,10 @@ union v4 {
         f32 w;
     };
     struct {
+        v2 xy;
+        f32 z,w;
+    };
+    struct {
         f32 r,g,b,a;
     };
     struct {

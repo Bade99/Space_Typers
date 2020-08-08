@@ -37,6 +37,7 @@ struct render_entry_img {
 //NOTE: LOD[0] is the highest resolution LOD
 struct environment_map {
 	img LOD[4];
+	f32 p_z; //map's location in z
 };
 
 struct render_entry_coordinate_system {
@@ -48,7 +49,8 @@ struct render_entry_coordinate_system {
 	img* texture;
 	img* normal_map;
 
-	environment_map* env_map;
+	environment_map* top_env_map;
+	environment_map* bottom_env_map;
 
 	v2 points[16];
 };
@@ -168,7 +170,7 @@ void clear(render_group* group, v4 color) {
 	p->color = color;
 }
 
-render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture, img* normal_map,environment_map* env_map) {
+render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture, img* normal_map,environment_map* top_env_map, environment_map* bottom_env_map) {
 	render_entry_coordinate_system* p = push_render_element(group, render_entry_coordinate_system); //TODO(fran): check we received a valid ptr?
 	p->origin = origin;
 	p->x_axis = x_axis;
@@ -176,7 +178,8 @@ render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin
 	p->color = color;
 	p->texture = texture;
 	p->normal_map = normal_map;
-	p->env_map = env_map;
+	p->top_env_map = top_env_map;
+	p->bottom_env_map = bottom_env_map;
 	return p;
 }
 
@@ -380,24 +383,33 @@ v4 unscale_and_bias_normal(v4 normal) //TODO(fran): I dont like this name at all
 
 //NOTE: handmade 99 1:15:00 simple explanation of saturation
 
-v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sample_direction/*aka the bounce*/, f32 roughness) {
-	img* LOD = &env_map->LOD[0];//TODO(fran): use roughness to pick LOD level
+#define BACKGROUND_IN_FRONT 0
+
+v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sample_direction/*aka the bounce*/, f32 roughness, f32 z_distance_from_map=0.f) {
+	//NOTE: screen_space_uv tells where the ray is beign cast from (or to, in my logic) in normalized screen coordinates
+	//		sample_direction tells in what direction the cast is going, not required to be normalized (for top-bottom reflection scheme we expect y to be positive)
+	//		roughness says which LOD to sample from, at 0 we sample from the highest resolution one, at 1 from the lowest
+
+	u32 LOD_idx = round_f32_to_u32(roughness * ((f32)arr_count(env_map->LOD) - 1));
+	img* LOD = &env_map->LOD[LOD_idx];
 
 	//NOTE: handmade 100 8:00 explanation of the direction of the eye vector and other light/normal related things
 	//REMEMBER: you shoot to the eye, the eye doesnt shoot, it does not produce light, just receives (the eye vector goes to the eye, NOT from)
 
-	//if (sample_direction.y < 0) return { 0,0,0 };
-
-	//game_assert(sample_direction.y>0)
 
 	f32 z_distance = 1.f;//meters //distance from the map
-#if 0
-	f32 meters_to_uv = .01f;
+	if (z_distance_from_map != 0.f)z_distance = z_distance_from_map;
+#if !BACKGROUND_IN_FRONT
+	f32 meters_to_uv = .03f;
 	f32 c = (z_distance*meters_to_uv) / sample_direction.y; //TODO(fran): isnt that wrong, since z_distance is going straight and z also has the offset from x and y?
 	v2 offset = c * v2{ sample_direction.x,sample_direction.z };
 #else
+	if (dot({ 0,0,1 }, sample_direction) < 0) return{ 0,0,0 };
+	//if (dot({ 0,0,1 }, sample_direction) < 0.1) return{ 0,0,0 };
+	//if (dot({ 0,0,1 }, sample_direction) >= 0) return{ 0,0,0 };
+	//if (dot({ 0,0,1 }, sample_direction) > -0.5) return{ 0,0,0 };
 	f32 meters_to_uv = .03f;
-	f32 c = (z_distance * meters_to_uv) / sample_direction.z; //The env map is positioned in the same place as the player, so we have to move in z to reach it //we compute how many Zs enter into the distance to the env map 
+	f32 c = (z_distance * meters_to_uv) / (sample_direction.z); //The env map is positioned in the same place as the player, so we have to move in z to reach it //we compute how many Zs enter into the distance to the env map 
 	v2 offset = c * v2{ sample_direction.x,sample_direction.y };
 	//if ((squared(sample_direction.x) + squared(sample_direction.y))>squared(1.f)  ) return { 0,0,0 };
 	//if (fabs(sample_direction.z) < .05f) return{ 0,0,0 };
@@ -423,36 +435,38 @@ v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sampl
 	sample = srgb255_to_linear1(sample);
 	v3 res = lerp(lerp(sample.texel00, sample.texel01, f_x), lerp(sample.texel10, sample.texel11, f_x), f_y).xyz;
 
-	return res;
+#if 0
+	*(u32*)((u8*)LOD->mem + i_x * IMG_BYTES_PER_PIXEL + i_y * LOD->pitch) = 0xFFFFFFFF; //REMEMBER: now THAT is visualization, I love it, very easy to see the problem
+#endif
 
-	/* My nonsensical attempt
-	v3 eye = { 0,0,-1 };
-	v3 bounce = eye - 2.f * dot(eye, normal)*normal;
-	f32 z_distance = 1.f;
-
-	f32 angle = acosf(dot(-eye, bounce)/(lenght(eye)*lenght(bounce)));
-
-	f32 hipotenuse = z_distance / cosf(angle);
-
-	f32 x = cosf(angle) * hipotenuse;
-	f32 y = sinf(angle) * hipotenuse;
-
-	v2 uv = { x / LOD->width, y / LOD->height };
-
-	v2 final_uv = screen_space_uv + uv;
-
-	final_uv.x = clamp01(final_uv.x);
-	final_uv.y = clamp01(final_uv.y);
-	u8* ptr = ((u8*)LOD->mem) + (u32)(final_uv.y*(LOD->height-1)) * LOD->pitch + (u32)(final_uv.x*(LOD->width-1)) * IMG_BYTES_PER_PIXEL;
-	v4 texel = unpack_4x8(*ptr) / 255.f;
-	return texel.rgb;
-	*/
+	return res;	
 }
 
 //TODO(fran): Im pretty sure I have a bug with alpha premult or gamma correction
-void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture, img* normal_map, environment_map* env_map) {
+void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture, img* normal_map, environment_map* top_env_map, environment_map* bottom_env_map, f32 pixels_to_meters) {
 	//NOTE: handmade day 90 to 92
 	color.rgb *= color.a; //premultiplication for the color up front
+
+	f32 inv_x_axis_length_sq = 1.f / length_sq(x_axis);
+	f32 inv_y_axis_length_sq = 1.f / length_sq(y_axis);
+
+	f32 x_axis_lenght= length(x_axis);
+	f32 y_axis_lenght= length(y_axis);
+
+	v2 n_x_axis = y_axis_lenght * (x_axis / x_axis_lenght); //transforms for correct direction of normals on non uniform scaling and rotation: you retain the direction of the axis but scale with the other one (remember that normals exist in a perpendicular space, therefore get modified in a "perpendicular" way)
+	v2 n_y_axis = x_axis_lenght * (y_axis / y_axis_lenght);
+	f32 n_z_scale = .5f*(x_axis_lenght + y_axis_lenght); //attempt to maintain z on a similar scale to what it would be after scaling the x and y normal axes
+	//TODO(fran): better n_z_scale calculation, could also be a parameter sent by the user
+
+	i32 width_max = buf->width-1;
+	i32 height_max = buf->height-1;
+
+	f32 inv_width_max = 1.f / (f32)width_max;
+	f32 inv_height_max=1.f/(f32)height_max;
+
+	f32 origin_z = 0.f;
+	f32 origin_y = (origin + .5f * x_axis + .5f * y_axis).y;
+	f32 fixed_cast_y = inv_height_max*origin_y;
 
 	i32 x_min= buf->width;
 	i32 x_max= 0;
@@ -516,14 +530,8 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 				dot(d - x_axis - y_axis, perp(x_axis)) < 0 &&//top edge //NOTE: you can also just use y_axis, cause all you need to do is "line up" the point with the line
 				dot(d - y_axis, perp(y_axis)) < 0 ) //left edge //NOTE: same here, you can just use origin
 			{
-				f32 inv_x_axis_lenght_sq = 1.f / lenght_sq(x_axis);
-				f32 inv_y_axis_lenght_sq = 1.f / lenght_sq(y_axis);
-
-				f32 u = dot(d, x_axis) * inv_x_axis_lenght_sq; //Texture mapping
-				f32 v = dot(d, y_axis) * inv_y_axis_lenght_sq;
-
-				game_assert(u >= 0 && u <= 1.f);
-				game_assert(v >= 0 && v <= 1.f);
+				f32 u = clamp01(dot(d, x_axis) * inv_x_axis_length_sq); //Texture mapping
+				f32 v = clamp01(dot(d, y_axis) * inv_y_axis_length_sq);
 
 				f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
 				f32 t_y = v * (f32)(texture->height - 2);
@@ -552,19 +560,15 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 				v4 texel = texel_a;
 #endif
 
-#if 0
-				int WidthMax = buf->width - 1;
-				f32 InvWidthMax = 1.0f / (f32)WidthMax;
-				int HeightMax = buf->height - 1;
-				f32 InvHeightMax = 1.0f / (f32)HeightMax;
-				f32 OriginY = (origin + 0.5f * x_axis + 0.5f * y_axis).y;
-				f32 FixedCastY = InvHeightMax * OriginY;
-				v2 screen_space_uv = { InvWidthMax * (f32)x, FixedCastY };
-#else
+#if BACKGROUND_IN_FRONT
 				v2 screen_space_uv = { (f32)x / (f32)(buf->width-1), (f32)y / (f32)(buf->height-1) }; //REMEMBER IMPORTANT OH GOD: CONVERT INTEGERS TO FLOAT, I took me 2 hours to find this bug, INTEGER DIVIDE I HATE U
+#else
+				v2 screen_space_uv = { inv_width_max*(f32)x,fixed_cast_y };
 #endif
 
-				if (normal_map) {
+				//NOTE: normals are transformed by A inverse transpose (A^-1^t), not A
+
+				if (normal_map) { //TODO(fran): my reflections dont look the same as casey, dont really know where the problem is, I've either got a bug with the sampling code or something external, the bug doesnt seem to be inside this routine (handmade day 103)
 					//f32 n_x = u * (f32)(normal_map->width - 2);
 					//f32 n_y = v * (f32)(normal_map->height - 2);
 
@@ -578,6 +582,18 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 					v4 normal = lerp(lerp(normal_sample.texel00, normal_sample.texel01,f_x),lerp(normal_sample.texel10, normal_sample.texel11,f_x),f_y); //TODO(fran): shouldnt we renormalize after lerp?
 					normal = unscale_and_bias_normal(normal);//converts to [-1,1]
 
+					//NOTE: handmade 102 15:00 explanation of how to transform normals on scaling
+					//NOTE: z is not modified since we dont have 3d rotations, only x and y, but you do need to scale z so its contribution stays the same as it did before, otherwise x and y might become too big, in which case z will be basically 0, or too small, where z will take over 
+					
+#if 1
+					//NOTE: Rotation and non uniform scale correction
+					normal.xy = normal.x * n_x_axis + normal.y * n_y_axis ;
+					normal.z *= n_z_scale;
+#else
+					//NOTE: just the rotation correction
+					normal.xy = normal.x * x_axis + normal.y * y_axis;
+					normal.z *= .5f*(length(x_axis)+ length(y_axis));
+#endif
 					//NOTE: normal gets de-normalized after lerping, we should renormalize after unscale_and_bias though we might not need to for the sample_env_amp
 					normal.xyz = normalize(normal.xyz);
 					
@@ -586,33 +602,47 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 					bounce.z -= 1;
 
 					//NOTE: handmade 98 1:07:00 bump map explanation
-					
-#if 0
+#if 1
+#if !BACKGROUND_IN_FRONT
+					bounce.z = -bounce.z;
+					f32 z_diff = ((f32)y-origin_y)*pixels_to_meters;
 					environment_map* farmap = 0;
+					f32 p_z = origin_z + z_diff ;
 					f32 tenvmap = bounce.y;
 					f32 tfarmap = 0;
 					if (tenvmap < -.5f) {
-						farmap = &env_map[0];//bottom
+						farmap = &bottom_env_map[0];//bottom
 						tfarmap = -1 - 2.f * tenvmap;
-						bounce.y = -bounce.y;
 					}
 					else if (tenvmap > .5f) {
-						farmap = &env_map[0];//top
+						farmap = &top_env_map[0];//top
 						tfarmap = 2.f * (tenvmap - .5f);
 					}
+					tfarmap *= tfarmap;
+
 					v3 reflection_color = { 0,0,0 };
 					if (farmap) {
-						v3 farmapcolor = sample_environment_map(farmap, screen_space_uv, bounce, normal.w);
+						f32 z_distance_from_map = farmap->p_z - p_z;
+						v3 farmapcolor = sample_environment_map(farmap, screen_space_uv, bounce, normal.w, z_distance_from_map);
 						reflection_color = lerp(reflection_color, farmapcolor, tfarmap);
 					}
 #else				
 
 					v3 reflection_color;
-					if (env_map) reflection_color = sample_environment_map(env_map, screen_space_uv, bounce, normal.w);
+					if (env_map) reflection_color = sample_environment_map(top_env_map, screen_space_uv, bounce, normal.w);
 					else reflection_color = { 0,0,0 };
 #endif
 
 					texel.rgb += texel.a* reflection_color;
+#else //show bounce direction //also pretty cool to see the visual representation of the human eye seeing more detail in the dark areas, the whole img is a gradient but the bright parts look very similar to me while the dark ones have the gradient very clearly visible
+					texel.rgb = v3{ .5f,.5f,.5f } + .5f * bounce; //REMEMBER: this is what visualization techniques is about
+					texel.rgb *= texel.a;
+					/*texel.r *= 0;
+					texel.g *= 1;
+					texel.b *= 0;
+					texel.a = 1;*/
+#endif
+
 					texel.r = clamp01(texel.r);
 					texel.g = clamp01(texel.g);
 					texel.b = clamp01(texel.b);
@@ -689,7 +719,7 @@ void output_render_group(render_group* rg, img* output_target) {
 			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)data;
 			base += sizeof(*entry);
 
-			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color, entry->texture, entry->normal_map, entry->env_map);
+			game_render_rectangle(output_target, entry->origin, entry->x_axis,entry->y_axis, entry->color, entry->texture, entry->normal_map, entry->top_env_map,entry->bottom_env_map, 1.f/rg->meters_to_pixels);
 			
 			v2 center = entry->origin;
 			v2 radius = { 2,2 };

@@ -652,6 +652,57 @@ img make_sphere_normal_map(game_memory_arena* arena,i32 width, i32 height, f32 r
 }
 #endif
 
+img make_sphere_diffuse_map(game_memory_arena* arena, i32 width, i32 height) {
+    img res = make_empty_img(arena, width, height);
+    f32 inv_width = 1.f / (f32)(width - 1);
+    f32 inv_height = 1.f / (f32)(height - 1);
+    u8* row = (u8*)res.mem;
+    for (i32 y = 0; y < width; y++) { //TODO(fran): im drawing top down
+        u32* pixel = (u32*)row;
+        for (i32 x = 0; x < height; x++) {
+            //AARRGGBB
+            v2 uv = { (f32)x * inv_width, (f32)y * inv_height }; //[0,1]
+            //NOTE: this is correct for the x and y positive of the circle (y is down)
+            v2 n = uv * 2.f - v2{ 1.f,1.f };//[-1,1]
+            f32 root_term = 1.f - squared(n.x) - squared(n.y);
+            f32 alpha=0;
+            if (root_term >= 0) {
+                alpha = 1;
+            }
+            v3 color{ .2,.2,.2 }; color *= alpha;
+            *pixel++ = (u8)(alpha * 255.f) << 24 | (u8)round_f32_to_u32(color.r*255.f) << 16 | (u8)round_f32_to_u32(color.g * 255.f) << 8 | (u8)round_f32_to_u32(color.b * 255.f) << 0;
+        }
+        row += res.pitch;
+    }
+    return res;
+}
+
+img make_cylinder_normal_map(game_memory_arena* arena, i32 width, i32 height, f32 roughness = 0.f) {
+    img res = make_empty_img(arena, width, height);
+    f32 inv_width = 1.f / (f32)(width - 1);
+    f32 inv_height = 1.f / (f32)(height - 1);
+    u8* row = (u8*)res.mem;
+    for (i32 y = 0; y < width; y++) { //TODO(fran): im drawing top down
+        u32* pixel = (u32*)row;
+        for (i32 x = 0; x < height; x++) {
+            //AARRGGBB
+            v2 uv = { (f32)x * inv_width, (f32)y * inv_height }; //[0,1]
+            //NOTE: this is correct for the x and y positive of the circle (y is down)
+            v2 n = hadamard((uv * 2.f - v2{ 1.f,1.f }), {1,0});//[-1,1]
+            f32 root_term = 1.f - squared(n.x);
+            f32 nz = square_root(root_term);
+            v3 normal = { n.x,n.y,nz };
+            //NOTE: I like this concept of creating your own conversions, I was trying to use i8 to have positive and negative but casey made it simpler by storing u8 and converting to f32 [-1,1]
+            v3 color = ((normal + v3{ 1,1,1 }) * .5f) * 255.f;//[0,255]
+
+            //NOTE: NEVER use signed integers when working with bytes, when you do shifts it retains the sign and fucks up the whole 32 bits
+            *pixel++ = (u8)(roughness * 255.f) << 24 | (u8)round_f32_to_u32(color.r) << 16 | (u8)round_f32_to_u32(color.g) << 8 | (u8)round_f32_to_u32(color.b) << 0;
+        }
+        row += res.pitch;
+    }
+    return res;
+}
+
 u32 color_v4_to_u32(v4 color) {
     color *= 255.f;
     u32 res = round_f32_to_i32(color.a) << 24 | round_f32_to_i32(color.r) << 16 | round_f32_to_i32(color.g) << 8 | round_f32_to_i32(color.b) << 0;
@@ -684,6 +735,29 @@ environment_map make_test_env_map(game_memory_arena* arena, i32 width, i32 heigh
         height /= 2;
     }
     return res;
+}
+
+void make_test_env_map(environment_map* res, v4 color) {
+    color.rgb *= color.a;
+    for (i32 idx = 0; idx < arr_count(res->LOD); idx++) {
+        
+        img* map = &res->LOD[idx];
+
+        bool row_checker_on = true;
+        i32 checker_width = 16;
+        i32 checker_height = 16;
+        for (i32 y = 0; y < map->height; y += checker_height) { //TODO(fran): im drawing top down
+            bool checker_on = row_checker_on;
+            for (i32 x = 0; x < map->width; x += checker_width) {
+                v4 c = checker_on ? color : v4{ 0, 0, 0, 1 };
+                v2 min = v2_from_i32(x, y);
+                v2 max = min + v2{ (f32)checker_width, (f32)checker_height };
+                game_render_rectangle(map, rc_min_max(min, max), c);
+                checker_on = !checker_on;
+            }
+            row_checker_on = !row_checker_on;
+        }
+    }
 }
 
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
@@ -796,13 +870,24 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         ts->is_initialized = true;
         initialize_arena(&ts->transient_arena, (u8*)memory->transient_storage + sizeof(transient_state), ((memory->transient_storage_sz - sizeof(transient_state))/2));
 
-        gs->test_diffuse = make_empty_img(&ts->transient_arena,256, 256);
-        game_render_rectangle(&gs->test_diffuse, rc_min_max({ 0,0 }, v2_from_i32( gs->test_diffuse.width,gs->test_diffuse.height)), {.5f,.5f,.5f,1});
+        gs->test_diffuse = make_sphere_diffuse_map(&ts->transient_arena, 256, 256);
+        //gs->test_diffuse = make_empty_img(&ts->transient_arena,256, 256);
+        //game_render_rectangle(&gs->test_diffuse, rc_min_max({ 0,0 }, v2_from_i32( gs->test_diffuse.width,gs->test_diffuse.height)), {.5f,.5f,.5f,1});
         gs->sphere_normal = make_sphere_normal_map(&ts->transient_arena, gs->test_diffuse.width, gs->test_diffuse.height);
+        //gs->sphere_normal = make_cylinder_normal_map(&ts->transient_arena, gs->test_diffuse.width, gs->test_diffuse.height); //TODO(fran): make correct cylinder and pyramid normal maps
         ts->env_map_width = 512;
         ts->env_map_height = 256;
-        ts->TEST_env_map = make_test_env_map(&ts->transient_arena, ts->env_map_width, ts->env_map_height, { 1.f,0,0,1.f });
-        ts->TEST_env_map.LOD[0] = gs->DEBUG_background;//REMOVE: now thats pretty nice
+
+        i32 width= ts->env_map_width, height= ts->env_map_height;
+        for (i32 idx = 0; idx < arr_count(ts->TEST_env_map.LOD); idx++) {
+            ts->TEST_env_map.LOD[idx] = make_empty_img(&ts->transient_arena, width, height);
+            img* map = &ts->TEST_env_map.LOD[idx];
+            width /= 2;
+            height /= 2;
+        }
+
+        //ts->TEST_env_map = make_test_env_map(&ts->transient_arena, ts->env_map_width, ts->env_map_height, { 1.f,0,0,1.f });
+        //ts->TEST_env_map.LOD[0] = gs->DEBUG_background;//REMOVE: now thats pretty nice
         //TODO: we can add more data structures to the transient state
         //for example a hash table for the background imgs for the words, lets see if in the same level similar background sizes are used, then we could reduce memory space by reusing the background, at the cost of some performance at the time of searching for the img
     }
@@ -857,7 +942,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             if (input->controller.down.ended_down) {
                 dd_word.y = -1.f;
             }
-            if (f32 l = lenght_sq(dd_word); l > 1.f) { //Normalizing the vector, diagonal movement is fixed and also takes care of higher values than 1
+            if (f32 l = length_sq(dd_word); l > 1.f) { //Normalizing the vector, diagonal movement is fixed and also takes care of higher values than 1
                 dd_word *= (1.f / sqrtf(l));
             }
             f32 constant_accel = 20.f * gs->word_height_meters; //m/s^2
@@ -896,11 +981,11 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             if (e.accumulated_time_sec > e.time_till_next_word_sec) {
                 e.accumulated_time_sec = 0;
                 v2 pos = { lerp(e.pos.x + e.collision.total_area.offset.x - e.collision.total_area.radius.x,e.pos.x + e.collision.total_area.offset.x + e.collision.total_area.radius.x, random_unilateral()),lerp(e.pos.y + e.collision.total_area.offset.y - e.collision.total_area.radius.y,e.pos.y + e.collision.total_area.offset.y + e.collision.total_area.radius.y, random_unilateral()) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point //TODO(fran): pick one of the collision areas and spawn from there, or maybe better to just say we use only one for this guy, since it also needs to generate the direction of the word, and then we'd need to store different directions
-                
+#if 0
                 game_entity word = create_word(gs,&ts->transient_arena,pos, v2{ .5f , .5f  }*gs->word_height_meters, v2{ -1,0 }*(5 * gs->word_height_meters)* random_unilateral(), { random_unilateral(),random_unilateral() ,random_unilateral() ,random_unilateral() });
                 
                 game_add_entity(gs, &word);
-
+#endif
             }
         } break;
         case entity_null: game_assert(0);
@@ -931,22 +1016,34 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
+#if 1
     v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,2*cos(gs->time) };
-    v2 x_axis = (1.25 + .25 * cosf(gs->time))* v2{ 256,0 };//(100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
-    v2 y_axis = perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
+#else
+    v2 origin = screen_offset +100.f * v2{ 3*sinf(gs->time) ,0 };
+#endif
     v4 color{0,1.f,0,0.5f+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
 
     //push_img(rg, {2,5}, &ts->TEST_env_map.LOD[0]);
-    render_entry_coordinate_system* lod = push_coord_system(rg, { 200,800 }, v2{ (f32)ts->TEST_env_map.LOD[0].width/6,0 }, { 0,(f32)ts->TEST_env_map.LOD[0].height / 6 }, color, &ts->TEST_env_map.LOD[0], 0, 0);
 
-    environment_map* env_map = &ts->TEST_env_map;
+    v2 x_axis = 256*v2{ cosf(gs->time),sinf(gs->time) };//(100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
+    v2 y_axis = /*(256.f * (1.5f + .5f * sinf(gs->time))) * perp(normalize(x_axis));*/perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
 
-    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->test_diffuse, &gs->sphere_normal,&ts->TEST_env_map);
+    make_test_env_map(&ts->TEST_env_map, { 1.f,0,0,1.f });
+
+    environment_map* top_env_map = &ts->TEST_env_map;
+    top_env_map->p_z = -1.f;
+
+
+    environment_map bottom_env_map = *top_env_map;
+    bottom_env_map.p_z = 1.f;
+
+    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->test_diffuse, &gs->sphere_normal, top_env_map, &bottom_env_map);
     u32 idx = 0;
     for (f32 y = 0; y < 1.f; y += .25f)
         for (f32 x = 0; x < 1.f; x += .25f)
             c->points[idx++] = {x,y};
     
+    render_entry_coordinate_system* lod = push_coord_system(rg, { 200,800 }, 3*v2{ (f32)ts->TEST_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_env_map.LOD[0].height / 6 }, color, &ts->TEST_env_map.LOD[0], 0, 0,0);
 
     //Render Loop
     output_render_group(rg,&framebuffer);

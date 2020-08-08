@@ -176,24 +176,34 @@ f32 dot(v2 a, v2 b) {
 	return res;
 }
 
-f32 lenght_sq(v2 v) {
+f32 length_sq(v2 v) {
 	f32 res;
 	res = dot(v, v);
 	return res;
 }
 
-f32 lenght_sq(v3 v) {
+f32 length_sq(v3 v) {
 	f32 res;
 	res = dot(v, v);
 	return res;
 }
 
-f32 lenght(v3 v) {
-	f32 res = sqrtf(lenght_sq(v));
+f32 length(v2 v) {
+	f32 res = sqrtf(length_sq(v));
+	return res;
+}
+
+f32 length(v3 v) {
+	f32 res = sqrtf(length_sq(v));
+	return res;
+}
+
+v2 normalize(v2 v) {
+	v2 res = v / length(v); //TODO(fran): beware of division by zero
 	return res;
 }
 
 v3 normalize(v3 v) {
-	v3 res = v / lenght(v); //TODO(fran): beware of division by zero
+	v3 res = v / length(v); //TODO(fran): beware of division by zero
 	return res;
 }
