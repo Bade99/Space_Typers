@@ -43,6 +43,7 @@ img DEBUG_load_png(const char* filename) {
         platform_free_file_memory(img_mem);
         if (bytes) {
             game_assert(channels == 4);
+            game_assert(width >= 0 && height >= 0);
             res.mem = bytes;
             res.width = width;
             res.height = height;
@@ -465,23 +466,6 @@ game_entity create_word_spawner(game_memory_arena* arena, v2 pos, v2 radius) {
     return word_spawner;
 }
 
-void clear_img(img* image) {
-    if(image->mem)
-        zero_mem(image->mem, image->width * image->height * IMG_BYTES_PER_PIXEL);
-}
-
-img make_empty_img(game_memory_arena* arena, u32 width, u32 height, bool clear_to_zero=true) {//TODO(fran): should allow for negative sizes?
-    img res;
-    res.width = width;
-    res.height = height;
-    res.pitch = width * IMG_BYTES_PER_PIXEL;
-    res.alignment_px = v2{ 0,0 };
-    res.mem = _push_mem(arena, width * height * IMG_BYTES_PER_PIXEL);
-    if(clear_to_zero)
-        clear_img(&res);
-    return res;
-}
-
 img make_word_background_image(game_state* gs, game_memory_arena* transient_arena, u32 word_width_px, u32 word_height_px) {
     i32 borders_hor = 1;
     i32 borders_vert = 1;
@@ -760,6 +744,8 @@ void make_test_env_map(environment_map* res, v4 color) {
     }
 }
 
+
+
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
 
     //BIG TODO(fran): game_add_entity can no longer copy the game_entity, that would mean it uses the collision areas stored in the saved entity (it's fine for now, until we need to apply some transformation to collision areas)
@@ -798,7 +784,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->word_height_meters = 1.5f;//TODO(fran): maybe this would be better placed inside world //TODO(fran): handmade day 86 min 45 mentions that it may be good to use values that generate a power of two integer for word_meters_to_pixels //TODO(fran): change to 1.f and simply add it as a note, so we can remove that multiply from all our computations
         gs->word_height_pixels = 60;
 
-        gs->lower_left_pixels = { 0.f,(f32)frame_buf->height };
+        gs->lower_left_pixels = { 0.f,0 };
 
         gs->word_meters_to_pixels = (f32)gs->word_height_pixels / gs->word_height_meters; //Transform from meters to pixels //NOTE: basis change (same goes for flipping y)
 
@@ -851,7 +837,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_menu.align = { 20,20 };
         gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
-        gs->DEBUG_mouse.alignment_px = v2_from_i32( -gs->DEBUG_mouse.width / 2,gs->DEBUG_mouse.height / 2 );
+        //gs->DEBUG_mouse.alignment_px = v2_from_i32( -gs->DEBUG_mouse.width / 2,gs->DEBUG_mouse.height / 2 );
+        set_bottom_up_alignment(&gs->DEBUG_mouse, {0.f,(f32)gs->DEBUG_mouse.height-1.f }); //REMEMBER: always subtract 1 from width or height
+        
+        //TODO(fran): check that every time I calculate the center I subtract 1 from width and height
 
         gs->word_border = DEBUG_load_png("assets/img/word_border.png");
         gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
@@ -1005,7 +994,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     push_img(rg, gs->camera * gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters - v2{ (f32)framebuffer.width/2.f-(f32)gs->DEBUG_menu.width / 2.f,(f32)framebuffer.height/2 - gs->DEBUG_menu.height / 2 }*gs->word_pixels_to_meters, &gs->DEBUG_menu);
 
     
-    f32 mousey = (gs->camera.y + framebuffer.height - gs->DEBUG_mouse.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
+    f32 mousey = (gs->camera.y + framebuffer.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
     f32 mousex = (gs->camera.x + input->controller.mouse.x) * gs->word_pixels_to_meters;
 
     push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse);

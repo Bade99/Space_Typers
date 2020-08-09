@@ -1,5 +1,11 @@
 #pragma once
 
+/*NOTE:
+	1. everywhere y should go up and x to the right	that includes all bitmaps, and render targets
+	(aka the mem pointer points to the bottom-most row when viewed on screen)
+	2. all inputs to the renderer are in world coordiantes unless specified otherwise, anything
+	in pixel values will be explicitly marked (for example with the suffix _px)
+*/
 struct render_basis {
 	v2 pos;
 };
@@ -92,7 +98,7 @@ rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera_
 	res.radius *= meters_to_pixels;
 	res.center -= camera_pixels;
 	res.center.x = lower_left_pixels.x + res.center.x;
-	res.center.y = lower_left_pixels.y - res.center.y;
+	res.center.y = lower_left_pixels.y + res.center.y;
 	return res;
 }
 
@@ -103,7 +109,7 @@ v2 transform_to_screen_coords(v2 game_coords, f32 meters_to_pixels, v2 camera_pi
 	v2 pixels_camera = pixels - camera_pixels;
 
 	//INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-	v2 pixels_camera_screen = { lower_left_pixels.x + pixels_camera.x , lower_left_pixels.y - pixels_camera.y };
+	v2 pixels_camera_screen = { lower_left_pixels.x + pixels_camera.x , lower_left_pixels.y + pixels_camera.y };
 
 	return pixels_camera_screen;
 }
@@ -158,11 +164,11 @@ void push_img(render_group* group, v2 pos_mtrs, img* image, bool IGNOREALPHA=fal
 void push_rect_boundary(render_group* group, rc2 rect_mtrs, v4 color) {
 	f32 thickness=(1/group->meters_to_pixels) *2.f;
 	//left right
-	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ rect_mtrs.radius.x,0 }, v2{ thickness, rect_mtrs.radius.y }), color); //TODO(fran): this enlarges the rectangle a bit, game_render_rectangle_boundary does it better, benefit here is that it is direction independent
-	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ rect_mtrs.radius.x,0 }, v2{ thickness, rect_mtrs.radius.y }) , color );
-	//top bottom
-	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ 0,rect_mtrs.radius.y }, v2{ rect_mtrs.radius.x, thickness }), color );
-	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ 0,rect_mtrs.radius.y }, v2{ rect_mtrs.radius.x, thickness }), color);
+	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ rect_mtrs.radius.x,0 } + v2{ thickness ,0}, v2{ thickness, rect_mtrs.radius.y }), color); //TODO(fran): why is the correction thickness instead of thickness/2 ?
+	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ rect_mtrs.radius.x,0 } - v2{ thickness ,0 }, v2{ thickness, rect_mtrs.radius.y }) , color );
+	//bottom top
+	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ 0,rect_mtrs.radius.y } + v2{ 0,thickness }, v2{ rect_mtrs.radius.x, thickness }), color );
+	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ 0,rect_mtrs.radius.y } - v2{ 0,thickness }, v2{ rect_mtrs.radius.x, thickness }), color);
 }
 
 void clear(render_group* group, v4 color) {
@@ -205,7 +211,7 @@ void game_render_rectangle(img* buf, rc2 rect, v4 color) {
 			//AARRGGBB
 			*pixel++ = col;
 		}
-		row += buf->pitch;//he does this instead of just incrementing each time in the x loop because of alignment things I dont care about now
+		row += buf->pitch;
 	}
 }
 
@@ -279,7 +285,7 @@ void game_render_img(img* buf, v2 pos, img* image, f32 dimming = 1.f) { //NOTE: 
 
 	game_assert(dimming >= 0.f && dimming <= 1.f);
 
-	rc2 rec = rc_center_radius(pos, v2_from_i32(image->width / 2, image->height / 2));
+	rc2 rec = rc_center_radius(pos, v2_from_i32(image->width / 2, image->height / 2)); //TODO(fran): I think this is wrong, width and height should be subtracted 1 (eg. (f32)(width-1))
 
 	v2_i32 min = { round_f32_to_i32(rec.get_min().x), round_f32_to_i32(rec.get_min().y) };//TODO: cleanup, make simpler
 	v2_i32 max = { round_f32_to_i32(rec.get_max().x), round_f32_to_i32(rec.get_max().y) };
@@ -682,7 +688,33 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 	}
 }
 
+void clear_img(img* image) {
+	if (image->mem)
+		zero_mem(image->mem, image->width * image->height * IMG_BYTES_PER_PIXEL);
+}
+
+img make_empty_img(game_memory_arena* arena, u32 width, u32 height, bool clear_to_zero = true) {//TODO(fran): should allow for negative sizes?
+	img res;
+	res.width = width;
+	res.height = height;
+	res.pitch = width * IMG_BYTES_PER_PIXEL;
+	res.alignment_px = v2{ 0,0 };
+	res.mem = _push_mem(arena, width * height * IMG_BYTES_PER_PIXEL);
+	if (clear_to_zero)
+		clear_img(&res);
+	return res;
+}
+
+//NOTE: sets the rendering "center" of the img, with no alignment imgs are rendered from the center, use align_px to change that center to any point in the img, choose values relative to the bottom left corner
+//Examples: align_px = {(img->width-1)/2,(img->height-1)/2} the center is still the same
+//					 = {0,0} "moves" the point {0,0} to the center 
+void set_bottom_up_alignment(img* image, v2 align_px) {
+	image->alignment_px.x = align_px.x - (f32)(image->width - 1) / 2.f;
+	image->alignment_px.y = align_px.y - (f32)(image->height - 1) / 2.f;
+}
+
 void output_render_group(render_group* rg, img* output_target) {
+	//TODO(fran): introduce alpha masks or similar, so we can make, for example, a wall with rounded edges that has a rolling diagonal bars animation inside
 	for (u32 base = 0; base < rg->push_buffer_used;) { //TODO(fran): use the basis, and define what is stored in meters and what in px
 		render_group_entry_header* header = (render_group_entry_header*)(rg->push_buffer_base + base);
 		base += sizeof(*header);
@@ -710,7 +742,7 @@ void output_render_group(render_group* rg, img* output_target) {
 			base += sizeof(*entry);
 			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
 			game_assert(entry->image);
-			pos -= entry->image->alignment_px;
+			pos -= entry->image->alignment_px; //NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
 			if (entry->IGNOREALPHA) game_render_img_ignore_transparency(output_target, pos, entry->image);
 			else game_render_img(output_target, pos, entry->image);
 		} break;

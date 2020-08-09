@@ -111,7 +111,7 @@ void ResizeFramebuffer(win32_framebuffer* buf, int width, int height) {
 
     buf->nfo.bmiHeader.biSize = sizeof(buf->nfo.bmiHeader);
     buf->nfo.bmiHeader.biWidth = width;
-    buf->nfo.bmiHeader.biHeight = -height; //top down DIB, origin at upper left corner
+    buf->nfo.bmiHeader.biHeight = height; //bottom-up
     buf->nfo.bmiHeader.biPlanes = 1;
     buf->nfo.bmiHeader.biBitCount = 32;
     buf->nfo.bmiHeader.biCompression = BI_RGB;
