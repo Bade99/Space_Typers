@@ -82,7 +82,7 @@ struct render_entry_coordinate_system {
 
 struct render_group {
 	f32 meters_to_pixels;
-	v2* camera_pixels;
+	v2* camera;
 	v2 lower_left_pixels;
 
 	f32 z_scaling;
@@ -94,7 +94,7 @@ struct render_group {
 	u32 max_push_buffer_sz;
 };
 
-render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixels, v2* camera_pixels, v2 lower_left_pixels, u32 max_push_buffer_sz) {
+render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixels, v2* camera, v2 lower_left_pixels, u32 max_push_buffer_sz) {
 	render_group* res = push_type(arena, render_group);
 
 	res->push_buffer_base = (u8*)push_sz(arena, max_push_buffer_sz);
@@ -102,7 +102,7 @@ render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixe
 	res->max_push_buffer_sz = max_push_buffer_sz;
 	
 	res->meters_to_pixels = meters_to_pixels;
-	res->camera_pixels = camera_pixels;
+	res->camera = camera;
 	res->lower_left_pixels = lower_left_pixels;
 	
 	res->z_scaling = 0.f;

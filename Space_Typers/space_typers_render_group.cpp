@@ -615,31 +615,45 @@ void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, 
 	}
 }
 
-rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera_pixels, v2 lower_left_pixels) {
+//rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera_pixels, v2 lower_left_pixels) {
+//	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
+//	rc2 res = game_coords;
+//	res.center *= meters_to_pixels;
+//	res.radius *= meters_to_pixels;
+//	res.center -= camera_pixels;
+//	res.center.x = lower_left_pixels.x + res.center.x;
+//	res.center.y = lower_left_pixels.y + res.center.y;
+//	return res;
+//}
+
+//NOTE: game_coords means meters
+//v2 transform_to_screen_coords(v2 game_coords, f32 meters_to_pixels, v2 camera_pixels, v2 lower_left_pixels) {
+//	v2 pixels = v2{ game_coords.x , game_coords.y }*meters_to_pixels;
+//
+//	v2 pixels_camera = pixels - camera_pixels;
+//
+//	//INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
+//	v2 pixels_camera_screen = { lower_left_pixels.x + pixels_camera.x , lower_left_pixels.y + pixels_camera.y };
+//
+//	return pixels_camera_screen;
+//}
+
+v2 transform_to_screen_coords(v2 game_coords, f32 meters_to_pixels, v2 camera, v2 screen_center_px, f32 z_scale) {
+	v2 pos_relative_to_cam = (game_coords - camera)*z_scale; //offset from the middle of the logical screen
+	v2 pos_px = pos_relative_to_cam* meters_to_pixels + screen_center_px;
+	return pos_px;
+}
+
+rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera, v2 screen_center_px, f32 z_scale) {
 	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
-	rc2 res = game_coords;
-	res.center *= meters_to_pixels;
-	res.radius *= meters_to_pixels;
-	res.center -= camera_pixels;
-	res.center.x = lower_left_pixels.x + res.center.x;
-	res.center.y = lower_left_pixels.y + res.center.y;
+	rc2 res = rc_min_max(transform_to_screen_coords(game_coords.get_min(), meters_to_pixels, camera, screen_center_px, z_scale), transform_to_screen_coords(game_coords.get_max(), meters_to_pixels, camera, screen_center_px, z_scale));
 	return res;
 }
 
-//NOTE: game_coords means meters
-v2 transform_to_screen_coords(v2 game_coords, f32 meters_to_pixels, v2 camera_pixels, v2 lower_left_pixels) {
-	v2 pixels = v2{ game_coords.x , game_coords.y }*meters_to_pixels;
-
-	v2 pixels_camera = pixels - camera_pixels;
-
-	//INFO: y is flipped and we subtract the height of the framebuffer so we render in the correct orientation with the origin at the bottom-left
-	v2 pixels_camera_screen = { lower_left_pixels.x + pixels_camera.x , lower_left_pixels.y + pixels_camera.y };
-
-	return pixels_camera_screen;
-}
-
 void output_render_group(render_group* rg, img* output_target) {
-	//TODO(fran): introduce alpha masks or similar, so we can make, for example, a wall with rounded edges that has a rolling diagonal bars animation inside
+
+	v2 screen_center = v2_from_i32( output_target->width-1,output_target->height-1 )/2.f;
+
 	for (u32 base = 0; base < rg->push_buffer_used;) { //TODO(fran): use the basis, and define what is stored in meters and what in px
 		render_group_entry_header* header = (render_group_entry_header*)(rg->push_buffer_base + base);
 		base += sizeof(*header);
@@ -658,21 +672,20 @@ void output_render_group(render_group* rg, img* output_target) {
 			render_entry_rectangle* entry = (render_entry_rectangle*)data;
 			base += sizeof(*entry);
 
-			rc2 rect = transform_to_screen_coords(entry->rc, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
-			rect.radius *= rg->z_scaling;
+			rc2 rect = transform_to_screen_coords(entry->rc, rg->meters_to_pixels, *rg->camera, screen_center, rg->z_scaling);
 			game_render_rectangle(output_target, rect, entry->color);
 		} break;
 		case RenderGroupEntryType_render_entry_img:
 		{
 			render_entry_img* entry = (render_entry_img*)data;
 			base += sizeof(*entry);
-			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
+			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera, screen_center, rg->z_scaling);
 
 			v2 x_axis = v2{ 1,0 }*entry->image->width * rg->z_scaling;
 			v2 y_axis = v2{ 0,1 }*entry->image->height * rg->z_scaling;
 
 			game_assert(entry->image);
-			pos -= entry->image->alignment_px; //TODO(fran): correct alignment with scaling
+			pos -= entry->image->alignment_px*(rg->z_scaling); //TODO(fran): correct alignment with scaling
 			//NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
 			if (entry->IGNOREALPHA) game_render_img_ignore_transparency(output_target, pos, entry->image); 
 			//else game_render_img(output_target, pos, entry->image);
@@ -707,7 +720,7 @@ void output_render_group(render_group* rg, img* output_target) {
 			render_entry_tileable* entry = (render_entry_tileable*)data;
 			base += sizeof(*entry);
 
-			v2 origin = transform_to_screen_coords(entry->origin, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
+			v2 origin = transform_to_screen_coords(entry->origin, rg->meters_to_pixels, *rg->camera, screen_center, rg->z_scaling);
 
 			v2 x_axis = entry->x_axis * rg->meters_to_pixels * rg->z_scaling; //TODO(fran): should the axes take into accout rg->lower_left_pixels? in the sense of y flipping, though we dont do that anymore 
 			v2 y_axis = entry->y_axis * rg->meters_to_pixels * rg->z_scaling;

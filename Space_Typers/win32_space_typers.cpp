@@ -2,6 +2,7 @@
 //
 #define _CRT_SECURE_NO_WARNINGS //freopen
 
+#define _DEVELOPER
 
 #include <SDKDDKVer.h> // defines highest available Windows platform, to build for a previous one set the _WIN32_WINNT macro to the platform you want and then inlcude
 #define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
@@ -489,7 +490,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     int game_update_hz = 30;
 
     bool sound_is_valid = false;
-#define _DEVELOPER
 #ifdef _DEVELOPER
     bool pause = false;
 #endif
@@ -862,7 +862,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
         return DefWindowProc(hwnd, message, wparam, lparam);
         break;
     }
-#ifndef _DEBUG
+#ifndef _DEVELOPER
     case WM_SETCURSOR:
     {
         if (LOWORD(lparam) == HTCLIENT) {

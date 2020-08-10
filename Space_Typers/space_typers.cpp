@@ -426,7 +426,7 @@ game_entity_collision_area_group make_simple_collision_box(game_memory_arena* ar
 
 //NOTE: radius is used to create the collision area, TODO(fran): I dont think I want to create the collision areas until the level is loaded, so maybe better is to store the radius (and offset) in an array, on the other hand... that's almost the same size as the collision area itself, hmm
 game_entity create_wall(game_memory_arena* arena, v2 pos,v2 radius, v4 color) {//TODO(fran): v4 with both xyzw and rgba access
-    game_entity wall;
+    game_entity wall; //TODO(fran): set this guys to {0} ? though living it like this generates bugs that bring me here to remember I forgot to set some new variable
     wall.acceleration = { 0,0 };
     wall.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
     wall.color = color;
@@ -435,6 +435,7 @@ game_entity create_wall(game_memory_arena* arena, v2 pos,v2 radius, v4 color) {/
     wall.type = entity_wall;
     wall.velocity = { 0,0 };
     wall.collision = make_simple_collision_box(arena, { 0,0 }, radius);
+    wall.anim_wall_texture = 0.f;
     return wall;//std::move, I hope the compiler is intelligent enough
 }
 
@@ -861,7 +862,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         make_wall_mask(&gs->wall_mask);
         gs->wall_tile = DEBUG_load_png("assets/img/wall_stripes.png");
 
-        gs->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
+        gs->camera = { 0 , 0 }; //NOTE: camera is in mtrs, it always represents the middle point of any screen/img
 
         game_initialize_entities(gs, gs->world.stages[0].lvls[gs->world.stages[0].current_lvl]);
 
@@ -914,7 +915,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     
     gs->time += input->dt_sec;
 
-    static f32 z_scale = 0.f;
+    static f32 z_scale = 1.f;
 
     if (input->controller.back.ended_down) {
         gs->world.stages[0].current_lvl++;
@@ -934,7 +935,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4{ 1.f,0.f,1.f,0 });;
 
     v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 }; //SUPERTODO: put camera in mtrs space !!!!!!!!!!!!!!!!!!!!!!!!
-    //push_img(rg, gs->camera* gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters, &gs->DEBUG_background,true); //TODO(fran): add render order so I can put this guys at the end and pick the current camera pos, not the previous frame one
 
     //TODO(fran): Z for scaling
     if (input->controller.mouse.z != 0) {
@@ -971,7 +971,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             move_entity(&e, dd_word, gs, input); //TODO(fran): for each entity that moves
 
             v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
-            gs->camera = e.pos * gs->word_meters_to_pixels - screen_offset; //TODO(fran): nicer camera update, lerp //TODO(fran): where to update the camera? //TODO(fran): camera position should be on the center, and at the time of drawing account for width and height from there
+            gs->camera = e.pos; //TODO(fran): nicer camera update, lerp //TODO(fran): where to update the camera? //TODO(fran): camera position should be on the center, and at the time of drawing account for width and height from there
         } break;
         case entity_wall: 
         {
@@ -1025,6 +1025,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         }
 
         push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
+        //TODO(fran): rect boundary doesnt work with scaling, maybe we should create a new render_entry for it, containing an rc and thickness, another reason for it being wrong could be that we arent scaling the thickness, TRY THAT
     }
 
     img framebuffer;
