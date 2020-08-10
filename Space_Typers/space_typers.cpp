@@ -744,7 +744,18 @@ void make_test_env_map(environment_map* res, v4 color) {
     }
 }
 
-
+void  make_wall_mask(img* mask) {
+    u8* row = (u8*)mask->mem;
+    for (i32 y = 0; y < mask->width; y++) { //TODO(fran): im drawing top down
+        u32* pixel = (u32*)row;
+        for (i32 x = 0; x < mask->height; x++) {
+            //AARRGGBB
+            f32 alpha = 1.f;
+            *pixel++ = (u8)(alpha * 255.f) << 24;
+        }
+        row += mask->pitch;
+    }
+}
 
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
 
@@ -846,6 +857,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
         gs->word_inside = DEBUG_load_png("assets/img/word_inside.png");
 
+        gs->wall_mask = make_empty_img(&gs->permanent_arena,256,256);
+        make_wall_mask(&gs->wall_mask);
+        gs->wall_tile = DEBUG_load_png("assets/img/wall_stripes.png");
 
         gs->camera = { 0 , 0 }; //TODO(fran): place camera in the world, to simplify first we fix it to the middle of the screen
 
@@ -868,9 +882,16 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         ts->env_map_height = 256;
 
         i32 width= ts->env_map_width, height= ts->env_map_height;
-        for (i32 idx = 0; idx < arr_count(ts->TEST_env_map.LOD); idx++) {
-            ts->TEST_env_map.LOD[idx] = make_empty_img(&ts->transient_arena, width, height);
-            img* map = &ts->TEST_env_map.LOD[idx];
+        for (i32 idx = 0; idx < arr_count(ts->TEST_top_env_map.LOD); idx++) {
+            ts->TEST_top_env_map.LOD[idx] = make_empty_img(&ts->transient_arena, width, height);
+            img* map = &ts->TEST_top_env_map.LOD[idx];
+            width /= 2;
+            height /= 2;
+        }
+        width = ts->env_map_width, height = ts->env_map_height;
+        for (i32 idx = 0; idx < arr_count(ts->TEST_bottom_env_map.LOD); idx++) {
+            ts->TEST_bottom_env_map.LOD[idx] = make_empty_img(&ts->transient_arena, width, height);
+            img* map = &ts->TEST_bottom_env_map.LOD[idx];
             width /= 2;
             height /= 2;
         }
@@ -944,7 +965,13 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
             gs->camera = e.pos * gs->word_meters_to_pixels - screen_offset; //TODO(fran): nicer camera update, lerp //TODO(fran): where to update the camera? //TODO(fran): camera position should be on the center, and at the time of drawing account for width and height from there
         } break;
-        case entity_wall: break;
+        case entity_wall: 
+        {
+            e.anim_wall_texture += input->dt_sec*100.f;
+            if (e.anim_wall_texture > (f32)gs->wall_tile.height) e.anim_wall_texture = 0;
+
+            push_tileable(rg, e.pos + e.collision.total_area.offset- e.collision.total_area.radius, { e.collision.total_area.radius.x*2 ,0 }, { 0,e.collision.total_area.radius.y*2 }, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1,1 }*1.f);
+        } break;
         case entity_word: 
         {
             move_entity(&e, {0,0}, gs, input);
@@ -981,7 +1008,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         default: game_assert(0);
         }
 
-        push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
+        //push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
     }
 
     img framebuffer;
@@ -1006,33 +1033,32 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
 #if 1
-    v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,2*cos(gs->time) };
+    v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,cos(gs->time) };
 #else
     v2 origin = screen_offset +100.f * v2{ 3*sinf(gs->time) ,0 };
 #endif
-    v4 color{0,1.f,0,0.5f+0.5f*cosf(gs->time*3)}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
+    v4 color{1.f,1.f,1.f,1.f}; //NOTE: remember cos goes from [-1,1] we gotta move that to [0,1] for color
 
     //push_img(rg, {2,5}, &ts->TEST_env_map.LOD[0]);
 
     v2 x_axis = 256*v2{ cosf(gs->time),sinf(gs->time) };//(100.f/*+50.f*cosf(gs->time)*/)*v2{cosf(gs->time),sinf(gs->time)};
     v2 y_axis = /*(256.f * (1.5f + .5f * sinf(gs->time))) * perp(normalize(x_axis));*/perp(x_axis);//(1+ sinf(gs->time))*perp(x_axis);//NOTE:we will not support skewing/shearing for now //(100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time+2.f),sinf(gs->time + 2.f) };//NOTE: v2 y_axis = (100.f + 50.f * sinf(gs->time)) *v2{cosf(gs->time-2.f),sinf(gs->time + 2.f) }; == 3d?
 
-    make_test_env_map(&ts->TEST_env_map, { 1.f,0,0,1.f });
+    make_test_env_map(&ts->TEST_top_env_map, { 1.f,0,0,1.f });
 
-    environment_map* top_env_map = &ts->TEST_env_map;
-    top_env_map->p_z = -1.f;
+    ts->TEST_top_env_map.p_z = -1.f;
 
+    make_test_env_map(&ts->TEST_bottom_env_map, { 0,1.f,0,1.f });
+    ts->TEST_bottom_env_map.p_z = 1.f;
 
-    environment_map bottom_env_map = *top_env_map;
-    bottom_env_map.p_z = 1.f;
-
-    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->test_diffuse, &gs->sphere_normal, top_env_map, &bottom_env_map);
+    render_entry_coordinate_system* c = push_coord_system(rg, origin, x_axis, y_axis, color, &gs->test_diffuse, &gs->sphere_normal, &ts->TEST_top_env_map, &ts->TEST_bottom_env_map);
     u32 idx = 0;
     for (f32 y = 0; y < 1.f; y += .25f)
         for (f32 x = 0; x < 1.f; x += .25f)
             c->points[idx++] = {x,y};
     
-    render_entry_coordinate_system* lod = push_coord_system(rg, { 200,800 }, 3*v2{ (f32)ts->TEST_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_env_map.LOD[0].height / 6 }, color, &ts->TEST_env_map.LOD[0], 0, 0,0);
+    push_coord_system(rg, { 200,600 }, 3*v2{ (f32)ts->TEST_top_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_top_env_map.LOD[0].height / 6 }, color, &ts->TEST_top_env_map.LOD[0], 0, 0,0);
+    push_coord_system(rg, { 200,400 }, 3*v2{ (f32)ts->TEST_bottom_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_bottom_env_map.LOD[0].height / 6 }, color, &ts->TEST_bottom_env_map.LOD[0], 0, 0,0);
 
     //Render Loop
     output_render_group(rg,&framebuffer);

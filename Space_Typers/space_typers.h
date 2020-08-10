@@ -95,8 +95,10 @@ struct game_entity {
     v2 acceleration; //TODO: apply to every entity
     u32 flags;
     
-    //TODO(fran): add enum for entity type?
     game_entity_type type;
+
+    //wall
+    f32 anim_wall_texture;
 
     //Word spawner
     f32 accumulated_time_sec;
@@ -159,7 +161,7 @@ struct game_world{
     u32 current_stage;
 };
 
-#include "space_typers_render_group.h"
+#include "space_typers_render_group.cpp"
 
 struct pairwise_collision_rule {
     game_entity* a;
@@ -175,7 +177,8 @@ struct transient_state { //Anything allocated in the arena that contains this st
 
     i32 env_map_width;
     i32 env_map_height;
-    environment_map TEST_env_map;
+    environment_map TEST_top_env_map;
+    environment_map TEST_bottom_env_map;
 };
 
 struct game_state {
@@ -201,6 +204,9 @@ struct game_state {
     img word_corner;
     img word_border;
     img word_inside;
+
+    img wall_mask;
+    img wall_tile;
 
     v2 camera;
     game_entity entities[20];

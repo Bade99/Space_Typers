@@ -8,6 +8,9 @@ struct v2 {
         struct {
         f32 x, y;
         };
+        struct {
+            f32 u, v;
+        };
         f32 comp[2];
     };
 
