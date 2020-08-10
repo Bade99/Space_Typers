@@ -44,7 +44,7 @@ struct game_controller_input {//TODO(fran): this struct probably needs rearrangi
     utf16 new_char; //probably not good to use utf16 with the surrogate pair situation, utf32 might be better for just getting one clean character no matter what
 
     game_button_state mouse_buttons[3]; //INFO: left,right,middle
-    v3_i32  mouse; //NOTE: z identifies the mouse wheel value
+    v3 mouse; //NOTE: z identifies the mouse wheel value
 
     game_button_state back; //TODO(fran): I think that for the type of game I want to make no key needs to be persistent as I do it now, they just need a boolean is_on_repeat that persists
 

@@ -914,6 +914,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     
     gs->time += input->dt_sec;
 
+    static f32 z_scale = 0.f;
+
     if (input->controller.back.ended_down) {
         gs->world.stages[0].current_lvl++;
         gs->world.stages[0].current_lvl %= gs->world.stages[0].level_count;
@@ -933,6 +935,12 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 }; //SUPERTODO: put camera in mtrs space !!!!!!!!!!!!!!!!!!!!!!!!
     //push_img(rg, gs->camera* gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters, &gs->DEBUG_background,true); //TODO(fran): add render order so I can put this guys at the end and pick the current camera pos, not the previous frame one
+
+    //TODO(fran): Z for scaling
+    if (input->controller.mouse.z != 0) {
+        z_scale += 1.f * gs->word_height_meters * input->dt_sec * input->controller.mouse.z;
+    }
+    rg->z_scaling = z_scale;
 
     for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) { //NOTE: remember to start from 1
         game_entity& e= gs->entities[entity_index];
@@ -969,8 +977,16 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         {
             e.anim_wall_texture += input->dt_sec*100.f;
             if (e.anim_wall_texture > (f32)gs->wall_tile.height) e.anim_wall_texture = 0;
-
-            push_tileable(rg, e.pos + e.collision.total_area.offset- e.collision.total_area.radius, { e.collision.total_area.radius.x*2 ,0 }, { 0,e.collision.total_area.radius.y*2 }, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1,1 }*1.f);
+            v2 origin = e.pos + e.collision.total_area.offset - e.collision.total_area.radius;
+#if 1
+            v2 x_axis = { e.collision.total_area.radius.x * 2 ,0 };
+            v2 y_axis = { 0,e.collision.total_area.radius.y * 2 };
+#else
+            v2 x_axis = v2{ cosf(gs->time),sinf(gs->time) };
+            v2 y_axis = (e.collision.total_area.radius.y * 2) * perp(x_axis);
+            x_axis *= (e.collision.total_area.radius.x * 2);
+#endif
+            push_tileable(rg, origin, x_axis, y_axis, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1,1 }*1.f);
         } break;
         case entity_word: 
         {
@@ -1008,7 +1024,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         default: game_assert(0);
         }
 
-        //push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
+        push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
     }
 
     img framebuffer;
@@ -1017,11 +1033,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     framebuffer.mem = frame_buf->mem;
     framebuffer.pitch = frame_buf->pitch;
 
-
-    push_img(rg, gs->camera * gs->word_pixels_to_meters + screen_offset * gs->word_pixels_to_meters - v2{ (f32)framebuffer.width/2.f-(f32)gs->DEBUG_menu.width / 2.f,(f32)framebuffer.height/2 - gs->DEBUG_menu.height / 2 }*gs->word_pixels_to_meters, &gs->DEBUG_menu);
-
+    push_img(rg, v2{1,1}*gs->word_height_meters, &gs->DEBUG_menu);
     
-    f32 mousey = (gs->camera.y + framebuffer.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
+    f32 mousey = (gs->camera.y + (f32)framebuffer.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
     f32 mousex = (gs->camera.x + input->controller.mouse.x) * gs->word_pixels_to_meters;
 
     push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse);
@@ -1062,8 +1076,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //Render Loop
     output_render_group(rg,&framebuffer);
-
-    //game_render_img(&framebuffer, { (f32)(input->controller.mouse.x - gs->DEBUG_mouse.alignment_px.x),(f32)(input->controller.mouse.y- gs->DEBUG_mouse.alignment_px.x) }, &gs->DEBUG_mouse);
 
     //Deletion Loop //TODO(fran): should deletion happen before render?
     for (u32 i = 1; i < gs->entity_count; i++) {

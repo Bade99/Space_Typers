@@ -558,6 +558,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 //OutputDebugStringW(a);
                 break;
             }
+            case WM_MOUSEWHEEL:
+            {
+                new_input.controller.mouse.z += (f32)GET_WHEEL_DELTA_WPARAM(msg.wParam) / (f32)WHEEL_DELTA;
+            } break;
             }
             //INFO: I still want to process every msg since I leave windows to take care of WM_CHAR (I know TranslateMessage emits some WM_CHAR but I dont know if there are others that do too)
             TranslateMessage(&msg);
@@ -570,7 +574,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         POINT mouse_pos;
         GetCursorPos(&mouse_pos);
         ScreenToClient(hwnd, &mouse_pos);
-        new_input.controller.mouse = { mouse_pos.x,mouse_pos.y,0 }; //TODO(fran): mousewheel
+        new_input.controller.mouse.xy = { (f32)mouse_pos.x,(f32)mouse_pos.y }; //TODO(fran): mousewheel
         win32_process_digital_button(&new_input.controller.mouse_buttons[0], GetKeyState(VK_LBUTTON) & (1 << 15)); //TODO(fran): maybe this would be done better in the message loop
         win32_process_digital_button(&new_input.controller.mouse_buttons[1], GetKeyState(VK_RBUTTON) & (1 << 15));
         win32_process_digital_button(&new_input.controller.mouse_buttons[2], GetKeyState(VK_MBUTTON) & (1 << 15));

@@ -172,8 +172,14 @@ v3& v3::operator*=(f32 rhs_scalar) {
 }
 
 //V3_I32
-struct v3_i32 {
-    i32 x, y, z;
+union v3_i32 {
+    struct {
+        i32 x, y, z;
+    };
+    struct {
+        v2_i32 xy;
+        i32 z;
+    };
 };
 
 //V4 (F32)

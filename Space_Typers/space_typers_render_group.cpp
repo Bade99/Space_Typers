@@ -659,6 +659,7 @@ void output_render_group(render_group* rg, img* output_target) {
 			base += sizeof(*entry);
 
 			rc2 rect = transform_to_screen_coords(entry->rc, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
+			rect.radius *= rg->z_scaling;
 			game_render_rectangle(output_target, rect, entry->color);
 		} break;
 		case RenderGroupEntryType_render_entry_img:
@@ -666,11 +667,16 @@ void output_render_group(render_group* rg, img* output_target) {
 			render_entry_img* entry = (render_entry_img*)data;
 			base += sizeof(*entry);
 			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
+
+			v2 x_axis = v2{ 1,0 }*entry->image->width * rg->z_scaling;
+			v2 y_axis = v2{ 0,1 }*entry->image->height * rg->z_scaling;
+
 			game_assert(entry->image);
-			pos -= entry->image->alignment_px; //NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
+			pos -= entry->image->alignment_px; //TODO(fran): correct alignment with scaling
+			//NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
 			if (entry->IGNOREALPHA) game_render_img_ignore_transparency(output_target, pos, entry->image); 
 			//else game_render_img(output_target, pos, entry->image);
-			else game_render_rectangle(output_target, pos, v2{ 1,0 }*entry->image->width, v2{ 0,1 }*entry->image->height, {1,1,1,1}, entry->image, 0, 0, 0, 1.f / rg->meters_to_pixels);
+			else game_render_rectangle(output_target, pos, x_axis, y_axis, {1,1,1,1}, entry->image, 0, 0, 0, 1.f / rg->meters_to_pixels);
 		} break;
 		case RenderGroupEntryType_render_entry_coordinate_system:
 		{
@@ -703,9 +709,9 @@ void output_render_group(render_group* rg, img* output_target) {
 
 			v2 origin = transform_to_screen_coords(entry->origin, rg->meters_to_pixels, *rg->camera_pixels, rg->lower_left_pixels);
 
-			v2 x_axis = entry->x_axis * rg->meters_to_pixels; //TODO(fran): should the axes take into accout rg->lower_left_pixels? in the sense of y flipping, though we dont do that anymore 
-			v2 y_axis = entry->y_axis * rg->meters_to_pixels;
-			v2 tile_sz_px = entry->tile_size * rg->meters_to_pixels;
+			v2 x_axis = entry->x_axis * rg->meters_to_pixels * rg->z_scaling; //TODO(fran): should the axes take into accout rg->lower_left_pixels? in the sense of y flipping, though we dont do that anymore 
+			v2 y_axis = entry->y_axis * rg->meters_to_pixels * rg->z_scaling;
+			v2 tile_sz_px = entry->tile_size * rg->meters_to_pixels * rg->z_scaling;
 			game_render_tileable(output_target, origin, x_axis, y_axis, entry->mask, entry->tile, entry->tile_offset_px, tile_sz_px);
 		} break;
 		default: game_assert(0); break;

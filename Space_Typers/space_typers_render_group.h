@@ -85,6 +85,8 @@ struct render_group {
 	v2* camera_pixels;
 	v2 lower_left_pixels;
 
+	f32 z_scaling;
+
 	render_basis default_basis;
 
 	u8* push_buffer_base; //NOTE: "a buffer that you just push things on"
@@ -103,6 +105,8 @@ render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixe
 	res->camera_pixels = camera_pixels;
 	res->lower_left_pixels = lower_left_pixels;
 	
+	res->z_scaling = 0.f;
+
 	render_basis default_basis;
 	default_basis.pos = { 0,0 };
 	res->default_basis = default_basis;
