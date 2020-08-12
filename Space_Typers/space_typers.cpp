@@ -745,13 +745,36 @@ void make_test_env_map(environment_map* res, v4 color) {
     }
 }
 
-void  make_wall_mask(img* mask) {
+void  make_wall_mask(img* mask, f32 corner_radius) {
+    //TODO(fran): page presents another way of calculating this, see which one is faster http://benice-equation.blogspot.com/2016/10/equation-of-rounded-rectangle.html#:~:text=The%20equation%20max(%7Cx%7C%20%2D%20a%2C%200)%C2%B2,d%C2%B2%20describes%20a%20rounded%20cuboid.
+    f32 width_max = mask->width-1;
+    f32 height_max = mask->height-1;
+    f32 half_width_max = width_max/2.f;
+    f32 half_height_max = height_max/2.f;
+
+    f32 corner_radius_sq = squared(corner_radius);
+    f32 corner_radius_4th = power4(corner_radius);
+    f32 a = half_width_max -corner_radius;
+    f32 b = half_height_max  -corner_radius;
+    //centered at(0, 0) , width = 2(a + c), height = 2(b + c) , corner radius = c
+    
     u8* row = (u8*)mask->mem;
-    for (i32 y = 0; y < mask->width; y++) { //TODO(fran): im drawing top down
+    for (i32 y = 0; y < mask->height; y++) {
         u32* pixel = (u32*)row;
-        for (i32 x = 0; x < mask->height; x++) {
+        for (i32 x = 0; x < mask->width; x++) {
             //AARRGGBB
             f32 alpha = 1.f;
+#if 1
+            //Rounded Square
+            if (squared(maximum(absolute(x - half_width_max) - a, 0)) + squared(maximum(absolute(y - half_height_max) - b, 0)) > corner_radius_sq)
+#else
+            //Squircle
+            if(power4((x-half_width_max)-a) + power4((y - half_height_max) - b) > corner_radius_4th)
+#endif
+                alpha = 0.f;
+            //TODO(fran): less harsh boundary, gradual alpha decrease in a region
+            //TODO(fran): see squircle and other similar shapes
+            //TODO(fran): maybe adding support for rounded rectangles in the renderer is better, this guy will get too deformed (squircle deforms less)
             *pixel++ = (u8)(alpha * 255.f) << 24;
         }
         row += mask->pitch;
@@ -793,12 +816,11 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         null_entity.type = entity_null; //NOTE: just in case
         game_add_entity(gs, &null_entity); //NOTE: entity index 0 is reserved as NULL
 
-        gs->word_height_meters = 1.5f;//TODO(fran): maybe this would be better placed inside world //TODO(fran): handmade day 86 min 45 mentions that it may be good to use values that generate a power of two integer for word_meters_to_pixels //TODO(fran): change to 1.f and simply add it as a note, so we can remove that multiply from all our computations
-        gs->word_height_pixels = 60;
+        //NOTE: the world is represented in meters, 1 meter is the unit of everything in the world
+        //gs->word_height_meters = 1.f;
+        //gs->word_height_pixels = 60;
 
-        gs->lower_left_pixels = { 0.f,0 };
-
-        gs->word_meters_to_pixels = (f32)gs->word_height_pixels / gs->word_height_meters; //Transform from meters to pixels //NOTE: basis change (same goes for flipping y)
+        gs->word_meters_to_pixels = 40;// (f32)gs->word_height_pixels / gs->word_height_meters; //Transform from meters to pixels
 
         gs->word_pixels_to_meters = 1 / gs->word_meters_to_pixels;
 
@@ -822,22 +844,22 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         level2.entities = push_arr(&gs->permanent_arena, game_entity, LVL1_ENTITY_COUNT);
         level2.entity_count = LVL1_ENTITY_COUNT;
         {
-            game_entity level1_wall = create_wall(&gs->permanent_arena, v2{ 8.f , 9.5f }*gs->word_height_meters, v2{ .5f , 4.5f }*gs->word_height_meters, { 1.f,0.f,0.f,0.f });
+            game_entity level1_wall = create_wall(&gs->permanent_arena, v2{ 8.f , 9.5f }, v2{ .5f , 4.5f }, { 1.f,0.f,0.f,0.f });
 
-            game_entity level1_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }*gs->word_height_meters, v2{ .5f , .5f }*gs->word_height_meters, { .0f,.0f,1.0f,.0f });
+            game_entity level1_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }, v2{ .5f , .5f }, { .0f,.0f,1.0f,.0f });
 
-            game_entity level1_word_spawner= create_word_spawner(&gs->permanent_arena,v2{ 19.5f, 10.5f } *gs->word_height_meters, v2{ .5f , 4.f } *gs->word_height_meters);
+            game_entity level1_word_spawner= create_word_spawner(&gs->permanent_arena,v2{ 19.5f, 10.5f }, v2{ .5f , 4.f });
 
             level1.entities[0] = level1_wall;
             level1.entities[1] = level1_player;
             level1.entities[2] = level1_word_spawner;
         }
         {
-            game_entity level2_wall = create_wall(&gs->permanent_arena,v2{ 8.5f , 7.5f }*gs->word_height_meters, v2{ .5f , 4.5f }*gs->word_height_meters, { 1.f,0.f,0.f,.0f });
+            game_entity level2_wall = create_wall(&gs->permanent_arena,v2{ 8.5f , 7.5f }, v2{ .5f , 4.5f }, { 1.f,0.f,0.f,.0f });
 
-            game_entity level2_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }*gs->word_height_meters, v2{ .75f , .75f }*gs->word_height_meters, { .0f,.0f,1.0f,.0f });
+            game_entity level2_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }, v2{ .75f , .75f }, { .0f,.0f,1.0f,.0f });
 
-            game_entity level2_word_spawner = create_word_spawner(&gs->permanent_arena,v2{ 16.5f , 10.5f }*gs->word_height_meters, v2{ .5f , .5f }*gs->word_height_meters);
+            game_entity level2_word_spawner = create_word_spawner(&gs->permanent_arena,v2{ 16.5f , 10.5f }, v2{ .5f , .5f });
 
             level2.entities[0] = level2_wall;
             level2.entities[1] = level2_player;
@@ -847,6 +869,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->DEBUG_background = DEBUG_load_png("assets/img/background.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_background.align = { 20,20 };
         gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
+        set_bottom_up_alignment(&gs->DEBUG_menu, { (f32)(gs->DEBUG_menu.width - 1) / 2.f,(f32)(gs->DEBUG_menu.height - 1) * .1f });
         //gs->DEBUG_menu.align = { 20,20 };
         gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
         //gs->DEBUG_mouse.alignment_px = v2_from_i32( -gs->DEBUG_mouse.width / 2,gs->DEBUG_mouse.height / 2 );
@@ -858,8 +881,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
         gs->word_inside = DEBUG_load_png("assets/img/word_inside.png");
 
-        gs->wall_mask = make_empty_img(&gs->permanent_arena,256,256);
-        make_wall_mask(&gs->wall_mask);
+        u32 wall_mask_width = 128;
+        u32 wall_mask_height = 512;
+        gs->wall_mask = make_empty_img(&gs->permanent_arena, wall_mask_width, wall_mask_height); //TODO(fran): we know walls are always gonna be stretched squares so it makes no sense to make a 256 by 256, we need more in y, that probably solves all our problems with scaling and different resolutions
+        make_wall_mask(&gs->wall_mask,minimum(wall_mask_width, wall_mask_height)*.25f);
         gs->wall_tile = DEBUG_load_png("assets/img/wall_stripes.png");
 
         gs->camera = { 0 , 0 }; //NOTE: camera is in mtrs, it always represents the middle point of any screen/img
@@ -929,7 +954,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //IDEA: what if the platform layer gave you scaling information, so you set up your render like you want and then the only thing that needs to change is scaling
 
     //Update & Render Prep Loop
-    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,gs->lower_left_pixels,Megabytes(1));
+    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,Megabytes(1));
 
     clear(rg, v4{ .25f,.25f,.25f,1.f });
     //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4{ 1.f,0.f,1.f,0 });;
@@ -938,9 +963,15 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //TODO(fran): Z for scaling
     if (input->controller.mouse.z != 0) {
-        z_scale += 1.f * gs->word_height_meters * input->dt_sec * input->controller.mouse.z;
+        z_scale += 1.f * input->dt_sec * input->controller.mouse.z;
     }
     rg->z_scaling = z_scale;
+    //NOTE: handmade 108 16:00 great explanation of depth of field and focus
+
+    static bool show_boundaries = false;
+    if (input->controller.enter.ended_down) {
+        show_boundaries = !show_boundaries;
+    }
 
     for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) { //NOTE: remember to start from 1
         game_entity& e= gs->entities[entity_index];
@@ -963,7 +994,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             if (f32 l = length_sq(dd_word); l > 1.f) { //Normalizing the vector, diagonal movement is fixed and also takes care of higher values than 1
                 dd_word *= (1.f / sqrtf(l));
             }
-            f32 constant_accel = 20.f * gs->word_height_meters; //m/s^2
+            f32 constant_accel = 20.f; //m/s^2
             dd_word *= constant_accel;
             //TODO(fran): ordinary differential eqs
             dd_word += -3.5f * e.velocity; //basic "drag" //TODO(fran): understand why this doesnt completely eat the acceleration value
@@ -972,6 +1003,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
             v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
             gs->camera = e.pos; //TODO(fran): nicer camera update, lerp //TODO(fran): where to update the camera? //TODO(fran): camera position should be on the center, and at the time of drawing account for width and height from there
+
+            push_img(rg, e.pos + e.collision.total_area.offset, &gs->DEBUG_menu);
+
         } break;
         case entity_wall: 
         {
@@ -1023,8 +1057,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         case entity_null: game_assert(0);
         default: game_assert(0);
         }
-
-        push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
+        if (show_boundaries)
+            push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
         //TODO(fran): rect boundary doesnt work with scaling, maybe we should create a new render_entry for it, containing an rc and thickness, another reason for it being wrong could be that we arent scaling the thickness, TRY THAT
     }
 
@@ -1033,8 +1067,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     framebuffer.width = frame_buf->width;
     framebuffer.mem = frame_buf->mem;
     framebuffer.pitch = frame_buf->pitch;
-
-    push_img(rg, v2{1,1}*gs->word_height_meters, &gs->DEBUG_menu);
     
     f32 mousey = (gs->camera.y + (f32)framebuffer.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
     f32 mousex = (gs->camera.x + input->controller.mouse.x) * gs->word_pixels_to_meters;

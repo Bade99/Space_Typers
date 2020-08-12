@@ -48,14 +48,15 @@ struct game_controller_input {//TODO(fran): this struct probably needs rearrangi
 
     game_button_state back; //TODO(fran): I think that for the type of game I want to make no key needs to be persistent as I do it now, they just need a boolean is_on_repeat that persists
 
+    game_button_state enter;
+
     union { //TODO(fran): check LLVM supports nameless struct/union
-        game_button_state persistent_buttons[5]; //REMEMBER: actualizar el tamaño del array si agrego botones
+        game_button_state persistent_buttons[4]; //REMEMBER: actualizar el tamaño del array si agrego botones
         struct {
             game_button_state up;
             game_button_state down;
             game_button_state left;
             game_button_state right;
-            game_button_state enter;
             //game_button_state escape;
         };
     };

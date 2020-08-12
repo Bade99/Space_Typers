@@ -207,3 +207,13 @@ v3 normalize(v3 v) {
 	v3 res = v / length(v); //TODO(fran): beware of division by zero
 	return res;
 }
+
+f32 absolute(f32 n) {
+	f32 res = n * sign(n);
+	return res;
+}
+
+f32 power4(f32 n) {
+	f32 res = squared(squared(n));
+	return res;
+}

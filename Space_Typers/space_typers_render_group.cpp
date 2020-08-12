@@ -15,6 +15,8 @@ void game_render_rectangle(img* buf, rc2 rect, v4 color) {
 		(round_f32_to_u32(color.g * 255.f) << 8) |
 		round_f32_to_u32(color.b * 255.f);
 
+	//TODO(fran): add handling for rotated rectangles
+
 	u8* row = (u8*)buf->mem + min.y * buf->pitch + min.x * IMG_BYTES_PER_PIXEL;
 	for (int y = min.y; y < max.y; y++) {
 		u32* pixel = (u32*)row;
@@ -543,7 +545,7 @@ void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, 
 		for (int x = x_min; x < x_max; x++) {
 
 			v2 p = v2_from_i32(x, y);
-			v2 d = p - origin;
+			v2 d = p - origin; //TODO(fran): the first time p and origin are off by .5, maybe that has something to do with the wrong tiling, that gives negative u and v values so the pixel is skipped
 			f32 u = dot(d, x_axis) * inv_x_axis_length_sq; 
 			f32 v = dot(d, y_axis) * inv_y_axis_length_sq;
 			if (u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f) {
@@ -591,8 +593,7 @@ void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, 
 					tile_sample = srgb255_to_linear1(tile_sample);
 					v4 tile_px = lerp(lerp(tile_sample.texel00, tile_sample.texel01, f_tile_x), lerp(tile_sample.texel10, tile_sample.texel11, f_tile_x), f_tile_y);
 
-					texel.rgb = tile_px.rgb;
-					texel.a *= tile_px.a;
+					texel = tile_px * texel.a;
 #if 0
 					//Visualize tile boundaries
 					if (tile_uv.u >= .99f || tile_uv.v >= .99f || tile_uv.u <= .01f || tile_uv.v <= .01f) texel.rgb = { 1.f,0,1.f };
@@ -684,6 +685,8 @@ void output_render_group(render_group* rg, img* output_target) {
 			v2 x_axis = v2{ 1,0 }*entry->image->width * rg->z_scaling;
 			v2 y_axis = v2{ 0,1 }*entry->image->height * rg->z_scaling;
 
+			pos -= {length(x_axis)*.5f, length(y_axis)*.5f};
+
 			game_assert(entry->image);
 			pos -= entry->image->alignment_px*(rg->z_scaling); //TODO(fran): correct alignment with scaling
 			//NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
@@ -732,3 +735,4 @@ void output_render_group(render_group* rg, img* output_target) {
 
 	}
 }
+//TODO(fran): Im having to convert to origin at the bottom left corner each time I push one of these, not pretty

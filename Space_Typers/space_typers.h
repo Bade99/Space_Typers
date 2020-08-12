@@ -185,11 +185,11 @@ struct game_state {
     //int xoff;
     //int yoff;
     //int hz;
-    f32 word_height_meters;
-    i32 word_height_pixels;
+    //f32 word_height_meters;
+    //i32 word_height_pixels;
     f32 word_meters_to_pixels;
     f32 word_pixels_to_meters;
-    v2 lower_left_pixels;
+    //v2 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena permanent_arena;
     game_memory_arena one_frame_arena;//gets reset at the end of each frame
