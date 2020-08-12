@@ -50,7 +50,7 @@ u32 random_count(u32 choice_count) { //produces a random integer between [0,choi
 	return distribution(generator);
 }
 
-f32 lerp(f32 n1, f32 n2, f32 t) { //TODO(fran): put t as the middle param?
+f32 lerp(f32 n1, f32 n2, f32 t) { //TODO(fran): put t as the middle param
 	//NOTE: interesting that https://en.wikipedia.org/wiki/Linear_interpolation mentions this is the Precise method
 	return (1.f - t) * n1 + t * n2;
 }
@@ -215,5 +215,11 @@ f32 absolute(f32 n) {
 
 f32 power4(f32 n) {
 	f32 res = squared(squared(n));
+	return res;
+}
+
+f32 map_to_range_clamp01(f32 min, f32 t, f32 max){
+	f32 range = max - min;
+	f32 res = clamp01(safe_ratio0(t - min, range));
 	return res;
 }

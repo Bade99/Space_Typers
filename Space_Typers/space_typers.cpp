@@ -425,7 +425,7 @@ game_entity_collision_area_group make_simple_collision_box(game_memory_arena* ar
 }
 
 //NOTE: radius is used to create the collision area, TODO(fran): I dont think I want to create the collision areas until the level is loaded, so maybe better is to store the radius (and offset) in an array, on the other hand... that's almost the same size as the collision area itself, hmm
-game_entity create_wall(game_memory_arena* arena, v2 pos,v2 radius, v4 color) {//TODO(fran): v4 with both xyzw and rgba access
+game_entity create_wall(game_memory_arena* arena, v2 pos,v2 radius, v4 color, u32 z_layer) {//TODO(fran): v4 with both xyzw and rgba access
     game_entity wall; //TODO(fran): set this guys to {0} ? though living it like this generates bugs that bring me here to remember I forgot to set some new variable
     wall.acceleration = { 0,0 };
     wall.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
@@ -436,10 +436,11 @@ game_entity create_wall(game_memory_arena* arena, v2 pos,v2 radius, v4 color) {/
     wall.velocity = { 0,0 };
     wall.collision = make_simple_collision_box(arena, { 0,0 }, radius);
     wall.anim_wall_texture = 0.f;
+    wall.z_layer = z_layer;
     return wall;//std::move, I hope the compiler is intelligent enough
 }
 
-game_entity create_player(game_memory_arena* arena, v2 pos, v2 radius, v4 color) {
+game_entity create_player(game_memory_arena* arena, v2 pos, v2 radius, v4 color, u32 z_layer) {
     game_entity player;
     player.flags = entity_flag_collides | entity_flag_alive | entity_flag_solid;
     player.color = color;
@@ -448,15 +449,16 @@ game_entity create_player(game_memory_arena* arena, v2 pos, v2 radius, v4 color)
     player.velocity = { 0,0 };
     player.type = entity_player;
     player.collision = make_simple_collision_box(arena, { 0,0 }, radius);
+    player.z_layer = z_layer;
     return player;
 }
 
-game_entity create_word_spawner(game_memory_arena* arena, v2 pos, v2 radius) {
+game_entity create_word_spawner(game_memory_arena* arena, v2 pos, v2 radius, u32 z_layer) {
     game_entity word_spawner;
     word_spawner.acceleration = { 0,0 };
     word_spawner.accumulated_time_sec = 0;
     word_spawner.flags = entity_flag_alive;
-    word_spawner.color = { 0, 0.5f, 0, 0 };
+    word_spawner.color = { 0, 0.5f, 0, 1.f };
     word_spawner.pos = pos;
     //word_spawner.radius = radius;
     word_spawner.time_till_next_word_sec = 5.f;
@@ -464,6 +466,7 @@ game_entity create_word_spawner(game_memory_arena* arena, v2 pos, v2 radius) {
     word_spawner.velocity = { 0,0 };
     //TODO(fran): specify: word output direction
     word_spawner.collision = make_simple_collision_box(arena, { 0,0 }, radius);
+    word_spawner.z_layer = z_layer;
     return word_spawner;
 }
 
@@ -527,7 +530,7 @@ img make_word_background_image(game_state* gs, game_memory_arena* transient_aren
     return res;
 }
 
-game_entity create_word(game_state* gs, game_memory_arena* transient_arena, v2 pos, v2 radius, v2 velocity, v4 color) {
+game_entity create_word(game_state* gs, game_memory_arena* transient_arena, v2 pos, v2 radius, v2 velocity, v4 color, u32 z_layer) {
     //TODO(fran): radius should be determined by the lenght of the word it contains
     game_entity word;
     word.flags = entity_flag_collides | entity_flag_alive;
@@ -545,15 +548,11 @@ game_entity create_word(game_state* gs, game_memory_arena* transient_arena, v2 p
     // we need a square generator that takes a corner, a side, and an inside (rotates the corner to generate the 4 ones)
     word.image = make_word_background_image(gs, transient_arena, 0, 0);
 
+    word.z_layer = z_layer;
+
     return word;
 }
 
-//i8 bilateral_f32_to_i8(f32 n) {
-//    f32 res;
-//    if (n >= 0) res = n * 127;
-//    else res = n * 128;
-//    return (i8)res;
-//}
 #if 0
 img make_sphere_normal_map(game_memory_arena* arena, i32 width, i32 height, f32 Roughness=0.f)
 {
@@ -654,7 +653,7 @@ img make_sphere_diffuse_map(game_memory_arena* arena, i32 width, i32 height) {
             if (root_term >= 0) {
                 alpha = 1;
             }
-            v3 color{ .2,.2,.2 }; color *= alpha;
+            v3 color{ .2f,.2f,.2f }; color *= alpha;
             *pixel++ = (u8)(alpha * 255.f) << 24 | (u8)round_f32_to_u32(color.r*255.f) << 16 | (u8)round_f32_to_u32(color.g * 255.f) << 8 | (u8)round_f32_to_u32(color.b * 255.f) << 0;
         }
         row += res.pitch;
@@ -747,8 +746,8 @@ void make_test_env_map(environment_map* res, v4 color) {
 
 void  make_wall_mask(img* mask, f32 corner_radius) {
     //TODO(fran): page presents another way of calculating this, see which one is faster http://benice-equation.blogspot.com/2016/10/equation-of-rounded-rectangle.html#:~:text=The%20equation%20max(%7Cx%7C%20%2D%20a%2C%200)%C2%B2,d%C2%B2%20describes%20a%20rounded%20cuboid.
-    f32 width_max = mask->width-1;
-    f32 height_max = mask->height-1;
+    f32 width_max = (f32)mask->width-1;
+    f32 height_max = (f32)mask->height-1;
     f32 half_width_max = width_max/2.f;
     f32 half_height_max = height_max/2.f;
 
@@ -837,6 +836,15 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         game_level_map& level1 = gs->world.stages[0].lvls[0];
         game_level_map& level2 = gs->world.stages[0].lvls[1];
 
+        level1.layer_nfo.layer_count = 3;
+        level1.layer_nfo.layers[0].current_scale = 1.f; //background
+        level1.layer_nfo.layers[0].scale_factor = .1f;
+        level1.layer_nfo.layers[1].current_scale = 1.f; //entities
+        level1.layer_nfo.layers[1].scale_factor = 1.f;
+        level1.layer_nfo.layers[2].current_scale = 1.f; //menu and mouse
+        level1.layer_nfo.layers[2].scale_factor = 0.f;
+        level2.layer_nfo = level1.layer_nfo;
+
 #define LVL1_ENTITY_COUNT 3
         level1.entities = push_arr(&gs->permanent_arena, game_entity, LVL1_ENTITY_COUNT);
         level1.entity_count = LVL1_ENTITY_COUNT;
@@ -844,22 +852,22 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         level2.entities = push_arr(&gs->permanent_arena, game_entity, LVL1_ENTITY_COUNT);
         level2.entity_count = LVL1_ENTITY_COUNT;
         {
-            game_entity level1_wall = create_wall(&gs->permanent_arena, v2{ 8.f , 9.5f }, v2{ .5f , 4.5f }, { 1.f,0.f,0.f,0.f });
+            game_entity level1_wall = create_wall(&gs->permanent_arena, v2{ 8.f , 9.5f }, v2{ .5f , 4.5f }, { 1.f,0.f,0.f,1.f }, 1);
 
-            game_entity level1_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }, v2{ .5f , .5f }, { .0f,.0f,1.0f,.0f });
+            game_entity level1_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }, v2{ .5f , .5f }, { .0f,.0f,1.f,1.f },1);
 
-            game_entity level1_word_spawner= create_word_spawner(&gs->permanent_arena,v2{ 19.5f, 10.5f }, v2{ .5f , 4.f });
+            game_entity level1_word_spawner= create_word_spawner(&gs->permanent_arena,v2{ 19.5f, 10.5f }, v2{ .5f , 4.f },1);
 
             level1.entities[0] = level1_wall;
             level1.entities[1] = level1_player;
             level1.entities[2] = level1_word_spawner;
         }
         {
-            game_entity level2_wall = create_wall(&gs->permanent_arena,v2{ 8.5f , 7.5f }, v2{ .5f , 4.5f }, { 1.f,0.f,0.f,.0f });
+            game_entity level2_wall = create_wall(&gs->permanent_arena,v2{ 8.5f , 7.5f }, v2{ .5f , 4.5f }, { 1.f,0.f,0.f,1.f },1);
 
-            game_entity level2_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }, v2{ .75f , .75f }, { .0f,.0f,1.0f,.0f });
+            game_entity level2_player = create_player(&gs->permanent_arena,v2{ 11.f ,5.f }, v2{ .75f , .75f }, { .0f,.0f,1.0f,1.f }, 1);
 
-            game_entity level2_word_spawner = create_word_spawner(&gs->permanent_arena,v2{ 16.5f , 10.5f }, v2{ .5f , .5f });
+            game_entity level2_word_spawner = create_word_spawner(&gs->permanent_arena,v2{ 16.5f , 10.5f }, v2{ .5f , .5f }, 1);
 
             level2.entities[0] = level2_wall;
             level2.entities[1] = level2_player;
@@ -884,7 +892,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         u32 wall_mask_width = 128;
         u32 wall_mask_height = 512;
         gs->wall_mask = make_empty_img(&gs->permanent_arena, wall_mask_width, wall_mask_height); //TODO(fran): we know walls are always gonna be stretched squares so it makes no sense to make a 256 by 256, we need more in y, that probably solves all our problems with scaling and different resolutions
-        make_wall_mask(&gs->wall_mask,minimum(wall_mask_width, wall_mask_height)*.25f);
+        make_wall_mask(&gs->wall_mask,minimum((f32)wall_mask_width, (f32)wall_mask_height)*.25f);
         gs->wall_tile = DEBUG_load_png("assets/img/wall_stripes.png");
 
         gs->camera = { 0 , 0 }; //NOTE: camera is in mtrs, it always represents the middle point of any screen/img
@@ -910,14 +918,14 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         i32 width= ts->env_map_width, height= ts->env_map_height;
         for (i32 idx = 0; idx < arr_count(ts->TEST_top_env_map.LOD); idx++) {
             ts->TEST_top_env_map.LOD[idx] = make_empty_img(&ts->transient_arena, width, height);
-            img* map = &ts->TEST_top_env_map.LOD[idx];
+            //img* map = &ts->TEST_top_env_map.LOD[idx];
             width /= 2;
             height /= 2;
         }
         width = ts->env_map_width, height = ts->env_map_height;
         for (i32 idx = 0; idx < arr_count(ts->TEST_bottom_env_map.LOD); idx++) {
             ts->TEST_bottom_env_map.LOD[idx] = make_empty_img(&ts->transient_arena, width, height);
-            img* map = &ts->TEST_bottom_env_map.LOD[idx];
+            //img* map = &ts->TEST_bottom_env_map.LOD[idx];
             width /= 2;
             height /= 2;
         }
@@ -940,8 +948,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     
     gs->time += input->dt_sec;
 
-    static f32 z_scale = 1.f;
-
     if (input->controller.back.ended_down) {
         gs->world.stages[0].current_lvl++;
         gs->world.stages[0].current_lvl %= gs->world.stages[0].level_count;
@@ -950,28 +956,28 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     }
 
     game_assert(gs->entities[0].type == entity_null);
-
-    //IDEA: what if the platform layer gave you scaling information, so you set up your render like you want and then the only thing that needs to change is scaling
-
+    layer_info* layer_nfo = &gs->world.stages[gs->world.current_stage].lvls[gs->world.stages[gs->world.current_stage].current_lvl].layer_nfo;
     //Update & Render Prep Loop
-    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,Megabytes(1));
+    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,Megabytes(1), layer_nfo);
 
     clear(rg, v4{ .25f,.25f,.25f,1.f });
-    //game_render_rectangle(&framebuffer, rc_min_max({ (f32)0,(f32)0 }, { (f32)framebuffer.width,(f32)framebuffer.height }), v4{ 1.f,0.f,1.f,0 });;
-
-    v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 }; //SUPERTODO: put camera in mtrs space !!!!!!!!!!!!!!!!!!!!!!!!
 
     //TODO(fran): Z for scaling
     if (input->controller.mouse.z != 0) {
-        z_scale += 1.f * input->dt_sec * input->controller.mouse.z;
+        for(u32 layer_idx =0; layer_idx<layer_nfo->layer_count;layer_idx++)
+            layer_nfo->layers[layer_idx].current_scale += input->dt_sec * input->controller.mouse.z * layer_nfo->layers[layer_idx].scale_factor;
     }
-    rg->z_scaling = z_scale;
     //NOTE: handmade 108 16:00 great explanation of depth of field and focus
 
     static bool show_boundaries = false;
     if (input->controller.enter.ended_down) {
         show_boundaries = !show_boundaries;
     }
+
+    img background = gs->DEBUG_background;
+    background.height = 540;
+    background.width = 960;
+    push_img(rg, { 10.f,10.f }, &background, 0);
 
     for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) { //NOTE: remember to start from 1
         game_entity& e= gs->entities[entity_index];
@@ -1001,10 +1007,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
             move_entity(&e, dd_word, gs, input); //TODO(fran): for each entity that moves
 
-            v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
+            //v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
             gs->camera = e.pos; //TODO(fran): nicer camera update, lerp //TODO(fran): where to update the camera? //TODO(fran): camera position should be on the center, and at the time of drawing account for width and height from there
 
-            push_img(rg, e.pos + e.collision.total_area.offset, &gs->DEBUG_menu);
+            push_img(rg, e.pos + e.collision.total_area.offset, &gs->DEBUG_menu,1);
 
         } break;
         case entity_wall: 
@@ -1020,13 +1026,13 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             v2 y_axis = (e.collision.total_area.radius.y * 2) * perp(x_axis);
             x_axis *= (e.collision.total_area.radius.x * 2);
 #endif
-            push_tileable(rg, origin, x_axis, y_axis, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1,1 }*1.f);
+            push_tileable(rg, origin, x_axis, y_axis, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1,1 }*1.f,e.z_layer);
         } break;
         case entity_word: 
         {
             move_entity(&e, {0,0}, gs, input);
 
-            push_img(rg, e.pos, &e.image);
+            push_img(rg, e.pos, &e.image,e.z_layer);
 
             //stbtt_fontinfo font; //TODO(fran): insert the font again!
             //int width, height;
@@ -1048,7 +1054,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
                 e.accumulated_time_sec = 0;
                 v2 pos = { lerp(e.pos.x + e.collision.total_area.offset.x - e.collision.total_area.radius.x,e.pos.x + e.collision.total_area.offset.x + e.collision.total_area.radius.x, random_unilateral()),lerp(e.pos.y + e.collision.total_area.offset.y - e.collision.total_area.radius.y,e.pos.y + e.collision.total_area.offset.y + e.collision.total_area.radius.y, random_unilateral()) }; //TODO: probably having a rect struct is better, I can more easily get things like the min point //TODO(fran): pick one of the collision areas and spawn from there, or maybe better to just say we use only one for this guy, since it also needs to generate the direction of the word, and then we'd need to store different directions
 #if 0
-                game_entity word = create_word(gs,&ts->transient_arena,pos, v2{ .5f , .5f  }*gs->word_height_meters, v2{ -1,0 }*(5 * gs->word_height_meters)* random_unilateral(), { random_unilateral(),random_unilateral() ,random_unilateral() ,random_unilateral() });
+                game_entity word = create_word(gs,&ts->transient_arena,pos, v2{ .5f , .5f  }*gs->word_height_meters, v2{ -1,0 }*(5 * gs->word_height_meters)* random_unilateral(), { random_unilateral(),random_unilateral() ,random_unilateral() ,random_unilateral() },e.z_layer);
                 
                 game_add_entity(gs, &word);
 #endif
@@ -1058,7 +1064,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         default: game_assert(0);
         }
         if (show_boundaries)
-            push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
+            push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color,e.z_layer);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
         //TODO(fran): rect boundary doesnt work with scaling, maybe we should create a new render_entry for it, containing an rc and thickness, another reason for it being wrong could be that we arent scaling the thickness, TRY THAT
     }
 
@@ -1068,10 +1074,12 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     framebuffer.mem = frame_buf->mem;
     framebuffer.pitch = frame_buf->pitch;
     
-    f32 mousey = (gs->camera.y + (f32)framebuffer.height - input->controller.mouse.y) * gs->word_pixels_to_meters;
-    f32 mousex = (gs->camera.x + input->controller.mouse.x) * gs->word_pixels_to_meters;
+    //TODO(fran): the mouse still comes in y is down coordinates, maybe I should ask for the platform to always send y is up
+    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * gs->word_pixels_to_meters;
+    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * gs->word_pixels_to_meters;
 
-    push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse);
+    push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse,2);
+
 
     //game_render_img_ignore_transparency(&framebuffer,  , &gs->DEBUG_background);
     //NOTE or TODO(fran): stb gives the png in correct orientation by default, I'm not sure whether that's gonna cause problems with our orientation reversing
@@ -1080,7 +1088,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
 #if 1
-    v2 origin = screen_offset +100.f * v2{ sinf(gs->time) ,cos(gs->time) };
+    v2 origin = v2{ 500.f,500.f } + 100.f * v2{ sinf(gs->time) ,cos(gs->time) };
 #else
     v2 origin = screen_offset +100.f * v2{ 3*sinf(gs->time) ,0 };
 #endif

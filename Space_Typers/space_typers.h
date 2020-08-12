@@ -108,6 +108,8 @@ struct game_entity {
 
     utf32 txt[25];
     img image;
+
+    u32 z_layer;
 };
 
 //NOTE REMEMBER: you cant check for multiple flags set at the same time, eg a|b|c will return true if any single one is set, not only if all are
@@ -124,9 +126,23 @@ void clear_flags(game_entity* e, u32 flags) {
     e->flags &= ~flags;
 }
 
+//TODO(fran): layer_info structure that contains the layers of the level and properties that the renderer cares about, in this case scaling
+//TODO(fran): add u32 layer to entities
+struct layer {
+    f32 scale_factor;
+    f32 current_scale;
+};
+struct layer_info {
+    layer layers[10];
+    u32 layer_count;
+};
+//This allows us to, for example have the mouse in a layer with no scaling, have the background in a layer with little scaling
+//and also sort draw order by layer, layer 0 being the least priority one
+
 struct game_level_map {
     game_entity* entities;
     u32 entity_count;
+    layer_info layer_nfo;
 };
 
 struct game_stage {

@@ -111,6 +111,14 @@ struct v3 {
     v3& operator*=(f32 rhs_scalar);
 };
 
+v3 V3(v2 v, f32 z) {
+    v3 res;
+    res.x = v.x;
+    res.y = v.y;
+    res.z = z;
+    return res;
+}
+
 v3 operator/(v3 v, f32 scalar) {
     v3 res;
     res.x = v.x / scalar;

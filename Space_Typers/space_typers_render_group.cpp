@@ -44,6 +44,8 @@ struct bilinear_sample {
 };
 
 bilinear_sample sample_bilinear(img* texture, i32 x, i32 y) {
+	//NOTE: handmade 108 1:20:00 interesting, once you scale an img to half size or more you get sampling errors cause you're no longer sampling all the pixels involved, that's when you need MIPMAPPING
+
 	u8* texel_ptr = ((u8*)texture->mem + y * texture->pitch + x * IMG_BYTES_PER_PIXEL);
 
 	u32 tex_a = *(u32*)texel_ptr; //NOTE: For a better blend we pick the colors around the texel, movement is much smoother
@@ -219,7 +221,7 @@ v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sampl
 	f32 z_distance = 1.f;//meters //distance from the map
 	if (z_distance_from_map != 0.f)z_distance = z_distance_from_map;
 #if !BACKGROUND_IN_FRONT
-	f32 meters_to_uv = .03;
+	f32 meters_to_uv = .03f;
 	f32 c = (z_distance * meters_to_uv) / sample_direction.y; //TODO(fran): isnt that wrong, since z_distance is going straight and z also has the offset from x and y?
 	v2 offset = c * v2{ sample_direction.x,sample_direction.z };
 #else
@@ -616,6 +618,64 @@ void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, 
 	}
 }
 
+void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color01) {
+
+	color01.rgb *= color01.a; //premult
+
+	f32 inv_x_axis_length_sq = 1.f / length_sq(x_axis);
+	f32 inv_y_axis_length_sq = 1.f / length_sq(y_axis);
+
+	i32 x_min = buf->width;
+	i32 x_max = 0;
+	i32 y_min = buf->height;
+	i32 y_max = 0;
+
+	v2 points[4] = { origin,origin + x_axis,origin + y_axis,origin + x_axis + y_axis };
+	for (v2 p : points) {
+		i32 floorx = (i32)floorf(p.x);
+		i32 ceilx = (i32)ceilf(p.x);
+		i32 floory = (i32)floorf(p.y);
+		i32 ceily = (i32)ceilf(p.y);
+
+		if (x_min > floorx)x_min = floorx;
+		if (y_min > floory)y_min = floory;
+		if (x_max < ceilx)x_max = ceilx;
+		if (y_max < ceily)y_max = ceily;
+	}
+
+	if (x_min < 0)x_min = 0;
+	if (y_min < 0)y_min = 0;
+	if (x_max > buf->width)x_max = buf->width;
+	if (y_max > buf->height)y_max = buf->height;
+
+	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
+
+	for (int y = y_min; y < y_max; y++) {
+		u32* pixel = (u32*)row;
+		for (int x = x_min; x < x_max; x++) {
+
+			v2 p = v2_from_i32(x, y);
+			v2 d = p - origin;
+			f32 u = dot(d, x_axis) * inv_x_axis_length_sq;
+			f32 v = dot(d, y_axis) * inv_y_axis_length_sq;
+			if (u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f) {
+
+				v4 dest = unpack_4x8(*pixel);
+
+				dest = srgb255_to_linear1(dest);
+
+				v4 blended = (1.f - color01.a) * dest + color01;
+
+				v4 blended255 = linear1_to_srgb255(blended);
+
+				*pixel = round_f32_to_u32(blended255.a) << 24 | round_f32_to_u32(blended255.r) << 16 | round_f32_to_u32(blended255.g) << 8 | round_f32_to_u32(blended255.b) << 0;
+			}
+			pixel++;
+		}
+		row += buf->pitch;
+	}
+}
+
 //rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera_pixels, v2 lower_left_pixels) {
 //	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
 //	rc2 res = game_coords;
@@ -639,15 +699,51 @@ void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, 
 //	return pixels_camera_screen;
 //}
 
+
 v2 transform_to_screen_coords(v2 game_coords, f32 meters_to_pixels, v2 camera, v2 screen_center_px, f32 z_scale) {
 	v2 pos_relative_to_cam = (game_coords - camera)*z_scale; //offset from the middle of the logical screen
 	v2 pos_px = pos_relative_to_cam* meters_to_pixels + screen_center_px;
 	return pos_px;
 }
 
+struct screen_coords_res {
+	v2 p_px;
+	bool valid;
+	f32 scale; //in case you want to scale other things with the same scaling that was applied to the point
+};
+screen_coords_res transform_to_screen_coords_perspective(v2 game_coords, f32 meters_to_pixels, v2 camera, v2 screen_center_px, f32 z_scale) {
+	screen_coords_res res{0};
+
+	v3 raw_xy = V3( (game_coords - camera) , 1.f);
+
+	f32 focal_length = .5f; //distance in meters from the viewer to the monitor
+
+	f32 z_camera_distance_above_ground = 5.f; //how far the camera in the world is to the point
+
+	f32 z_distance_to_p = z_camera_distance_above_ground - (z_scale-1.f) ; //NOTE: he uses a z that goes positive for things getting closer and negative for things going away
+
+	f32 near_clip_plane = .2f;
+
+	if (z_distance_to_p > near_clip_plane) {
+		v3 projected_xy = focal_length * raw_xy / z_distance_to_p;
+		
+		res.p_px = screen_center_px + projected_xy.xy * meters_to_pixels;
+		res.scale = projected_xy.z;
+		res.valid = true;
+	}
+
+	return res;
+} //TODO(fran): use this guy
+
 rc2 transform_to_screen_coords(rc2 game_coords, f32 meters_to_pixels, v2 camera, v2 screen_center_px, f32 z_scale) {
 	//TODO(fran): now that we use rc this is much simpler to compute than this, no need to go to min-max and then back to center-radius
 	rc2 res = rc_min_max(transform_to_screen_coords(game_coords.get_min(), meters_to_pixels, camera, screen_center_px, z_scale), transform_to_screen_coords(game_coords.get_max(), meters_to_pixels, camera, screen_center_px, z_scale));
+	return res;
+}
+
+f32 get_layer_scaling(layer_info* nfo, u32 idx) {
+	game_assert(idx < nfo->layer_count);
+	f32 res = nfo->layers[idx].current_scale;
 	return res;
 }
 
@@ -672,27 +768,37 @@ void output_render_group(render_group* rg, img* output_target) {
 		{
 			render_entry_rectangle* entry = (render_entry_rectangle*)data;
 			base += sizeof(*entry);
-
-			rc2 rect = transform_to_screen_coords(entry->rc, rg->meters_to_pixels, *rg->camera, screen_center, rg->z_scaling);
+			f32 z_scaling = get_layer_scaling(rg->layer_nfo, entry->layer_idx);
+#if 0
+			rc2 rect = transform_to_screen_coords(entry->rc, rg->meters_to_pixels, *rg->camera, screen_center, z_scaling);
 			game_render_rectangle(output_target, rect, entry->color);
+#else
+			v2 origin = transform_to_screen_coords(entry->rc.get_min(), rg->meters_to_pixels, *rg->camera, screen_center, z_scaling);
+
+			v2 axes = entry->rc.get_max() - entry->rc.get_min();
+
+			v2 x_axis = v2{ axes.x, 0 } *rg->meters_to_pixels * z_scaling;
+			v2 y_axis = v2{0, axes .y} *rg->meters_to_pixels* z_scaling;
+			game_render_rectangle(output_target, origin, x_axis, y_axis, entry->color);
+#endif
+
 		} break;
 		case RenderGroupEntryType_render_entry_img:
 		{
 			render_entry_img* entry = (render_entry_img*)data;
 			base += sizeof(*entry);
-			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera, screen_center, rg->z_scaling);
+			f32 z_scaling = get_layer_scaling(rg->layer_nfo, entry->layer_idx); //TODO(fran): now we do have a common thing that probably all entries share and could be precalculated before the switch
+			v2 pos = transform_to_screen_coords(entry->center, rg->meters_to_pixels, *rg->camera, screen_center, z_scaling);
 
-			v2 x_axis = v2{ 1,0 }*entry->image->width * rg->z_scaling;
-			v2 y_axis = v2{ 0,1 }*entry->image->height * rg->z_scaling;
+			v2 x_axis = v2{ 1,0 }*(f32)entry->image->width * z_scaling;
+			v2 y_axis = v2{ 0,1 }*(f32)entry->image->height * z_scaling;
 
 			pos -= {length(x_axis)*.5f, length(y_axis)*.5f};
 
 			game_assert(entry->image);
-			pos -= entry->image->alignment_px*(rg->z_scaling); //TODO(fran): correct alignment with scaling
+			pos -= entry->image->alignment_px*z_scaling;
 			//NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
-			if (entry->IGNOREALPHA) game_render_img_ignore_transparency(output_target, pos, entry->image); 
-			//else game_render_img(output_target, pos, entry->image);
-			else game_render_rectangle(output_target, pos, x_axis, y_axis, {1,1,1,1}, entry->image, 0, 0, 0, 1.f / rg->meters_to_pixels);
+			game_render_rectangle(output_target, pos, x_axis, y_axis, {1,1,1,1}, entry->image, 0, 0, 0, 1.f / rg->meters_to_pixels);
 		} break;
 		case RenderGroupEntryType_render_entry_coordinate_system:
 		{
@@ -722,12 +828,12 @@ void output_render_group(render_group* rg, img* output_target) {
 		{
 			render_entry_tileable* entry = (render_entry_tileable*)data;
 			base += sizeof(*entry);
+			f32 z_scaling = get_layer_scaling(rg->layer_nfo, entry->layer_idx);
+			v2 origin = transform_to_screen_coords(entry->origin, rg->meters_to_pixels, *rg->camera, screen_center, z_scaling);
 
-			v2 origin = transform_to_screen_coords(entry->origin, rg->meters_to_pixels, *rg->camera, screen_center, rg->z_scaling);
-
-			v2 x_axis = entry->x_axis * rg->meters_to_pixels * rg->z_scaling; //TODO(fran): should the axes take into accout rg->lower_left_pixels? in the sense of y flipping, though we dont do that anymore 
-			v2 y_axis = entry->y_axis * rg->meters_to_pixels * rg->z_scaling;
-			v2 tile_sz_px = entry->tile_size * rg->meters_to_pixels * rg->z_scaling;
+			v2 x_axis = entry->x_axis * rg->meters_to_pixels * z_scaling; //TODO(fran): should the axes take into accout rg->lower_left_pixels? in the sense of y flipping, though we dont do that anymore 
+			v2 y_axis = entry->y_axis * rg->meters_to_pixels * z_scaling;
+			v2 tile_sz_px = entry->tile_size * rg->meters_to_pixels * z_scaling;
 			game_render_tileable(output_target, origin, x_axis, y_axis, entry->mask, entry->tile, entry->tile_offset_px, tile_sz_px);
 		} break;
 		default: game_assert(0); break;

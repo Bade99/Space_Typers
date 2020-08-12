@@ -36,6 +36,7 @@ struct render_entry_rectangle{
 	render_basis basis;
 	rc2 rc;//NOTE: so I dont confuse it
 	v4 color;
+	u32 layer_idx;
 };
 
 struct render_entry_img {
@@ -43,9 +44,7 @@ struct render_entry_img {
 	img* image;
 	v2 center;
 	//TODO(fran): add color, in the push default to {1,1,1,1}
-
-
-	bool IGNOREALPHA; //HACK: get rid of this once we have optimized the renderer, I just use it to be able to render the background img without destroying performance
+	u32 layer_idx;
 };
 
 struct render_entry_tileable {
@@ -57,6 +56,7 @@ struct render_entry_tileable {
 	v2 tile_offset_px;
 	v2 tile_size;
 	//TODO(fran): tile rotation
+	u32 layer_idx;
 };
 
 //NOTE: LOD[0] is the highest resolution LOD
@@ -85,7 +85,7 @@ struct render_group {
 	v2* camera;
 	//v2 lower_left_pixels;
 
-	f32 z_scaling;
+	layer_info* layer_nfo;
 
 	render_basis default_basis;
 
@@ -94,7 +94,7 @@ struct render_group {
 	u32 max_push_buffer_sz;
 };
 
-render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixels, v2* camera, u32 max_push_buffer_sz) {
+render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixels, v2* camera, u32 max_push_buffer_sz, layer_info* layer_nfo) {
 	render_group* res = push_type(arena, render_group);
 
 	res->push_buffer_base = (u8*)push_sz(arena, max_push_buffer_sz);
@@ -105,11 +105,11 @@ render_group* allocate_render_group(game_memory_arena* arena, f32 meters_to_pixe
 	res->camera = camera;
 	//res->lower_left_pixels = lower_left_pixels;
 	
-	res->z_scaling = 0.f;
-
 	render_basis default_basis;
 	default_basis.pos = { 0,0 };
 	res->default_basis = default_basis;
+
+	res->layer_nfo = layer_nfo;
 
 	return res;
 }
@@ -127,30 +127,30 @@ void* _push_render_element(render_group* group, u32 sz, render_group_entry_type 
 }
 
 //NOTE: I think he used offset as pos, and basis will be useful later for transformations
-void push_rect(render_group* group, rc2 rect_mtrs, v4 color) { //TODO(fran): check whether it is more useful to use rc2 or two v2
+void push_rect(render_group* group, rc2 rect_mtrs, v4 color, u32 layer_idx) { //TODO(fran): check whether it is more useful to use rc2 or two v2
 	render_entry_rectangle* p = push_render_element(group,render_entry_rectangle); //TODO(fran): check we received a valid ptr?
 	p->basis = group->default_basis;
 	p->color = color;
 	p->rc = rect_mtrs;//TODO(fran): should I do the transform here, and live it so the render only offsets by the camera?
+	p->layer_idx = layer_idx;
 }
 
-void push_img(render_group* group, v2 pos_mtrs, img* image, bool IGNOREALPHA=false) {
+void push_img(render_group* group, v2 pos_mtrs, img* image, u32 layer_idx) {
 	render_entry_img* p = push_render_element(group, render_entry_img); //TODO(fran): check we received a valid ptr?
 	p->basis = group->default_basis;
 	p->center = pos_mtrs;
 	p->image = image;
-
-	p->IGNOREALPHA = IGNOREALPHA;
+	p->layer_idx = layer_idx;
 }
 
-void push_rect_boundary(render_group* group, rc2 rect_mtrs, v4 color) { //TODO(fran): maybe this should be a separate entity instead of 4 push_rects
+void push_rect_boundary(render_group* group, rc2 rect_mtrs, v4 color, u32 layer_idx) { //TODO(fran): maybe this should be a separate entity instead of 4 push_rects
 	f32 thickness=(1/group->meters_to_pixels) *2.f;
 	//left right
-	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ rect_mtrs.radius.x,0 } + v2{ thickness ,0}, v2{ thickness, rect_mtrs.radius.y }), color); //TODO(fran): why is the correction thickness instead of thickness/2 ?
-	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ rect_mtrs.radius.x,0 } - v2{ thickness ,0 }, v2{ thickness, rect_mtrs.radius.y }) , color );
+	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ rect_mtrs.radius.x,0 } + v2{ thickness ,0}, v2{ thickness, rect_mtrs.radius.y }), color, layer_idx); //TODO(fran): why is the correction thickness instead of thickness/2 ?
+	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ rect_mtrs.radius.x,0 } - v2{ thickness ,0 }, v2{ thickness, rect_mtrs.radius.y }) , color, layer_idx);
 	//bottom top
-	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ 0,rect_mtrs.radius.y } + v2{ 0,thickness }, v2{ rect_mtrs.radius.x, thickness }), color );
-	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ 0,rect_mtrs.radius.y } - v2{ 0,thickness }, v2{ rect_mtrs.radius.x, thickness }), color);
+	push_rect(group, rc_center_radius(rect_mtrs.center - v2{ 0,rect_mtrs.radius.y } + v2{ 0,thickness }, v2{ rect_mtrs.radius.x, thickness }), color, layer_idx);
+	push_rect(group, rc_center_radius(rect_mtrs.center + v2{ 0,rect_mtrs.radius.y } - v2{ 0,thickness }, v2{ rect_mtrs.radius.x, thickness }), color, layer_idx);
 }
 
 void clear(render_group* group, v4 color) {
@@ -171,7 +171,7 @@ render_entry_coordinate_system* push_coord_system(render_group* group, v2 origin
 	return p;
 }
 
-render_entry_tileable* push_tileable(render_group* group, v2 origin, v2 x_axis, v2 y_axis, img* mask, img* tile, v2 tile_offset_px, v2 tile_size) {
+render_entry_tileable* push_tileable(render_group* group, v2 origin, v2 x_axis, v2 y_axis, img* mask, img* tile, v2 tile_offset_px, v2 tile_size, u32 layer_idx) {
 	render_entry_tileable* p = push_render_element(group, render_entry_tileable); //TODO(fran): check we received a valid ptr?
 	p->origin = origin;
 	p->x_axis = x_axis;
@@ -180,6 +180,7 @@ render_entry_tileable* push_tileable(render_group* group, v2 origin, v2 x_axis, 
 	p->tile = tile;
 	p->tile_offset_px = tile_offset_px;
 	p->tile_size = tile_size;
+	p->layer_idx = layer_idx;
 	return p;
 }
 
