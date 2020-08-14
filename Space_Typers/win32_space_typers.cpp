@@ -404,7 +404,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     // Perform application initialization:
 
-    SIZE window_sz = { 1920,1080 };
+    //SIZE window_sz = { 1920,1080 };
+    SIZE window_sz = { 1280,720};
 
     HWND hwnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, window_sz.cx, window_sz.cy+50/*TODO(fran): take into account the window frame*/, nullptr, nullptr, hInstance, nullptr);

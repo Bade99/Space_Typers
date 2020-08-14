@@ -1029,7 +1029,13 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     }
 
     //Render Prep Loop
-    render_group* rg = allocate_render_group(&gs->one_frame_arena, gs->camera, Megabytes(1), layer_nfo);
+    img framebuffer;
+    framebuffer.height = frame_buf->height;
+    framebuffer.width = frame_buf->width;
+    framebuffer.mem = frame_buf->mem;
+    framebuffer.pitch = frame_buf->pitch;
+    
+    render_group* rg = allocate_render_group(&gs->one_frame_arena, gs->camera, Megabytes(1), layer_nfo,framebuffer.width,framebuffer.height);
     clear(rg, v4{ .25f,.25f,.25f,1.f });
 
     push_img(rg, { 10.f,10.f }, { 16.f,0.f }, { 0.f,9.f }, 0, &gs->DEBUG_background);
@@ -1077,20 +1083,13 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         if (show_boundaries)
             push_rect_boundary(rg, e.pos + e.collision.total_area.offset - e.collision.total_area.radius, v2{ e.collision.total_area.radius.x * 2.f ,0.f }, v2{ 0.f, e.collision.total_area.radius.y * 2.f }, e.z_layer, e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
     }
-
-    img framebuffer;
-    framebuffer.height = frame_buf->height;
-    framebuffer.width = frame_buf->width;
-    framebuffer.mem = frame_buf->mem;
-    framebuffer.pitch = frame_buf->pitch;
     
     //TODO(fran): the mouse still comes in y is down coordinates, maybe I should ask for the platform to always send y is up
-    f32 meters_to_pixels = 40; //TODO(fran): remove this
-    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * (1.f/ meters_to_pixels); //TODO(fran): straight to pixels push rendering options
-    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * (1.f / meters_to_pixels);
+    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * (1.f/ rg->meters_to_pixels); //TODO(fran): straight to pixels push rendering options
+    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * (1.f / rg->meters_to_pixels);
 
-    v2 mouse_x_axis = {3.f,0.f};
-    v2 mouse_y_axis = {0.f,3.f};
+    v2 mouse_x_axis = {1.f,0.f};
+    v2 mouse_y_axis = {0.f,1.f};
 
     push_img(rg, { mousex,mousey}, mouse_x_axis, mouse_y_axis, 2, &gs->DEBUG_mouse); //TODO(fran): push_img_screen_position //TODO(fran): alignment so the mouse top left is at windows'normal mouse position
 
@@ -1128,6 +1127,10 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     
     push_coord_system(rg, { 200,600 }, 3*v2{ (f32)ts->TEST_top_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_top_env_map.LOD[0].height / 6 }, color, &ts->TEST_top_env_map.LOD[0], 0, 0,0);
     push_coord_system(rg, { 200,400 }, 3*v2{ (f32)ts->TEST_bottom_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_bottom_env_map.LOD[0].height / 6 }, color, &ts->TEST_bottom_env_map.LOD[0], 0, 0,0);
+
+    //Camera bounds test
+    rc2 screen_bounds = get_camera_rc_at_target(rg); //TODO(fran): re-check this (handmade 110) it's ok with no scaling but if i scroll it goes wrong, or maybe what happens is right, but I dont think so
+    push_rect_boundary(rg, rg->camera - screen_bounds.radius, { screen_bounds.get_dim().x ,0 }, { 0,screen_bounds.get_dim().y }, 1, { 1.f,0.f,1.f,1.f });
 
     //Render Loop
     output_render_group(rg,&framebuffer);

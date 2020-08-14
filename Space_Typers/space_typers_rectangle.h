@@ -13,6 +13,11 @@ struct rc2 {
         v2 res = center + radius;
         return res;
     }
+
+    v2 get_dim() {
+        v2 res = radius * 2.f;
+        return res;
+    }
 };
 
 rc2 rc_min_max(v2 min, v2 max) { //NOTE REMEMBER: I like this idea

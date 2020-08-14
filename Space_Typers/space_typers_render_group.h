@@ -79,7 +79,16 @@ struct render_entry_coordinate_system {
 //TODO(fran): compute everything position related in the push_..., we'll re-add the two separate loops, one for entity updating and one for entity render pushing, we can remove the v2* camera and dont have to be making all the computations in the middle of the render loop, downside of course is cache, we are getting the same things in and out more than once
 
 struct render_group {
+	v2 monitor_radius_mtrs;
+
 	v2 camera;
+
+	//NOTE: camera parameters:
+	//TODO(fran): handmade day 110: debug camera, to allow me to see more of the world outside of the player's view
+	f32 focal_length; //distance in meters from the viewer(camera) to the monitor
+	f32 z_camera_distance_above_ground; //how far in meters the viewer(camera) is to the point
+
+	f32 meters_to_pixels; //NOTE: translates meters _on the monitor_ into pixels _on the monitor_
 
 	layer_info* layer_nfo;
 
@@ -88,7 +97,7 @@ struct render_group {
 	u32 max_push_buffer_sz;
 };
 
-render_group* allocate_render_group(game_memory_arena* arena, v2 camera, u32 max_push_buffer_sz, layer_info* layer_nfo) {
+render_group* allocate_render_group(game_memory_arena* arena, v2 camera, u32 max_push_buffer_sz, layer_info* layer_nfo, i32 resolution_px_x, i32 resolution_px_y) {
 	render_group* res = push_type(arena, render_group);
 
 	res->push_buffer_base = (u8*)push_sz(arena, max_push_buffer_sz);
@@ -98,6 +107,18 @@ render_group* allocate_render_group(game_memory_arena* arena, v2 camera, u32 max
 	res->camera = camera;
 	
 	res->layer_nfo = layer_nfo;
+
+	//TODO(fran): better values for this two, once I have straight to pixels push rendering (so I can check the mouse pos without all this)
+	res->focal_length = .5f; //Meters from the person to their monitor
+	res->z_camera_distance_above_ground = 10.f;
+
+	f32 monitor_width = .6f; //NOTE: horizontal size of monitor in mtrs //approximately based on https://www.dell.com/hr/p/dell-e2720hs-monitor/pd?ref=PD_Family
+
+	res->meters_to_pixels = (f32)resolution_px_x * monitor_width; //NOTE: resolution independent rendering
+
+	f32 pixels_to_meters = 1.f / res->meters_to_pixels;
+
+	res->monitor_radius_mtrs = {resolution_px_x * .5f * pixels_to_meters, resolution_px_y * .5f * pixels_to_meters };
 
 	return res;
 }
@@ -134,8 +155,7 @@ void push_img(render_group* group, v2 origin, v2 x_axis, v2 y_axis, u32 layer_id
 }
 
 void push_rect_boundary(render_group* group, v2 origin, v2 x_axis, v2 y_axis, u32 layer_idx, v4 color) { //TODO(fran): maybe this should be a separate entity instead of 4 push_rects
-	f32 meters_to_pixels = 40; //TODO(fran): remove
-	f32 thickness=(1.f/meters_to_pixels) *2.f; //TODO(fran): ugly, also it doesnt scale with z or anything, maybe doesnt matter since it's debug only i'd think
+	f32 thickness= .05f;
 
 	v2 x_thickness = normalize(x_axis) * thickness;
 	v2 y_thickness = normalize(y_axis) * thickness;
@@ -199,4 +219,28 @@ img make_empty_img(game_memory_arena* arena, u32 width, u32 height, bool clear_t
 
 void set_bottom_left_alignment(img* image, f32 align_percent_x, f32 align_percent_y) {
 	image->alignment_percent = { align_percent_x,align_percent_y };
+}
+
+//NOTE: unprojecting the screen
+v2 unproject(render_group* rg, v2 projected_xy, f32 at_z_dist_from_cam) { //takes an x y on the screen and converts it to world coordinates
+	v2 world_xy = (at_z_dist_from_cam / rg->focal_length) * projected_xy;
+	return world_xy;
+} //TODO(fran): does this need to take into account the camera position of rg?
+
+rc2 get_camera_rc_at_distance(render_group* rg, f32 z_distance_from_camera) {
+
+	//TODO(fran): does this need to take into account the camera position of rg?
+
+	v2 projected_xy = rg->monitor_radius_mtrs;
+	
+	v2 raw_xy = unproject(rg, projected_xy, z_distance_from_camera);
+
+	rc2 res = rc_center_radius({ 0,0 }, raw_xy);
+
+	return res;
+}
+
+rc2 get_camera_rc_at_target(render_group* rg) { //NOTE: returns mtrs
+	rc2 res = get_camera_rc_at_distance(rg,rg->z_camera_distance_above_ground);
+	return res;
 }
