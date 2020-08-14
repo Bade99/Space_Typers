@@ -47,6 +47,7 @@ struct img {
     i32 height;
     i32 pitch;
     v2 alignment_percent; //NOTE: offset from the bottom left of the img that moves its position
+    f32 width_over_height; //NOTE: in case you want to maintain the original aspect ratio, multiply any height by this to get the proper width
     void* mem;
 };
 

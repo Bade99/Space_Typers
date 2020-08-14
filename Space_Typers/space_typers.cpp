@@ -48,6 +48,7 @@ img DEBUG_load_png(const char* filename) {
             res.width = width;
             res.height = height;
             res.pitch = width * IMG_BYTES_PER_PIXEL;
+            res.width_over_height = (f32)width / (f32)height;
             //res.channels = channels;
             //res.bytes_per_channel = 1; //NOTE: this interface always assumes 8 bits per component
 
@@ -807,6 +808,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //IDEA: screen presents a word in some random position, after n seconds fades to black, then again screen "unfades" and shows a new word in some other position, and so on, the player has to write the word/sentence before the screen turns completely black
 
+    //IDEA: special word that avoids walls
+
     if (!memory->is_initialized) {
         memory->is_initialized = true; //TODO(fran): should the platform layer do this?
 
@@ -871,11 +874,11 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         }
         
         gs->DEBUG_background = DEBUG_load_png("assets/img/background.png"); //TODO(fran): release mem DEBUG_unload_png();
-        set_bottom_up_alignment(&gs->DEBUG_background, .5f, .5f);
+        set_bottom_left_alignment(&gs->DEBUG_background, .5f, .5f);
 
         gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
         gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
-        set_bottom_up_alignment(&gs->DEBUG_mouse, .0f, 1.f);
+        set_bottom_left_alignment(&gs->DEBUG_mouse, .0f, 1.f);
         
         gs->word_border = DEBUG_load_png("assets/img/word_border.png");
         gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
@@ -1082,8 +1085,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     framebuffer.pitch = frame_buf->pitch;
     
     //TODO(fran): the mouse still comes in y is down coordinates, maybe I should ask for the platform to always send y is up
-    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * (1.f/ rg->meters_to_pixels); //TODO(fran): straight to pixels push rendering options
-    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * (1.f / rg->meters_to_pixels);
+    f32 meters_to_pixels = 40; //TODO(fran): remove this
+    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * (1.f/ meters_to_pixels); //TODO(fran): straight to pixels push rendering options
+    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * (1.f / meters_to_pixels);
 
     v2 mouse_x_axis = {3.f,0.f};
     v2 mouse_y_axis = {0.f,3.f};

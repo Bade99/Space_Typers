@@ -79,7 +79,6 @@ struct render_entry_coordinate_system {
 //TODO(fran): compute everything position related in the push_..., we'll re-add the two separate loops, one for entity updating and one for entity render pushing, we can remove the v2* camera and dont have to be making all the computations in the middle of the render loop, downside of course is cache, we are getting the same things in and out more than once
 
 struct render_group {
-	f32 meters_to_pixels;
 	v2 camera;
 
 	layer_info* layer_nfo;
@@ -96,9 +95,7 @@ render_group* allocate_render_group(game_memory_arena* arena, v2 camera, u32 max
 	res->push_buffer_used = 0;
 	res->max_push_buffer_sz = max_push_buffer_sz;
 	
-	res->meters_to_pixels = 40;
 	res->camera = camera;
-	//res->lower_left_pixels = lower_left_pixels;
 	
 	res->layer_nfo = layer_nfo;
 
@@ -137,7 +134,8 @@ void push_img(render_group* group, v2 origin, v2 x_axis, v2 y_axis, u32 layer_id
 }
 
 void push_rect_boundary(render_group* group, v2 origin, v2 x_axis, v2 y_axis, u32 layer_idx, v4 color) { //TODO(fran): maybe this should be a separate entity instead of 4 push_rects
-	f32 thickness=(1/group->meters_to_pixels) *2.f; //TODO(fran): ugly, also it doesnt scale with z or anything, maybe doesnt matter since it's debug only i'd think
+	f32 meters_to_pixels = 40; //TODO(fran): remove
+	f32 thickness=(1.f/meters_to_pixels) *2.f; //TODO(fran): ugly, also it doesnt scale with z or anything, maybe doesnt matter since it's debug only i'd think
 
 	v2 x_thickness = normalize(x_axis) * thickness;
 	v2 y_thickness = normalize(y_axis) * thickness;
@@ -192,15 +190,13 @@ img make_empty_img(game_memory_arena* arena, u32 width, u32 height, bool clear_t
 	res.height = height;
 	res.pitch = width * IMG_BYTES_PER_PIXEL;
 	res.alignment_percent = v2{ 0,0 };
+	res.width_over_height = (f32)width / (f32)height;
 	res.mem = _push_mem(arena, width * height * IMG_BYTES_PER_PIXEL);
 	if (clear_to_zero)
 		clear_img(&res);
 	return res;
 }
 
-//NOTE: sets the rendering "center" of the img, with no alignment imgs are rendered from the center, use align_px to change that center to any point in the img, choose values relative to the bottom left corner
-//Examples: align_px = {(img->width-1)/2,(img->height-1)/2} the center is still the same
-//					 = {0,0} "moves" the point {0,0} to the center 
-void set_bottom_up_alignment(img* image, f32 align_percent_x, f32 align_percent_y) {
+void set_bottom_left_alignment(img* image, f32 align_percent_x, f32 align_percent_y) {
 	image->alignment_percent = { align_percent_x,align_percent_y };
 }

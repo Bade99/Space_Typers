@@ -504,7 +504,7 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 }
 
 //TODO(fran): Im pretty sure I have a bug with alpha premult or gamma correction
-void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, img* tile, v2 tile_offset_px, v2 tile_size_px) {
+void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, img* tile, v2 tile_offset_percent, v2 tile_size_px) {
 
 	f32 inv_x_axis_length_sq = 1.f / length_sq(x_axis);
 	f32 inv_y_axis_length_sq = 1.f / length_sq(y_axis);
@@ -532,7 +532,7 @@ void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, 
 	if (x_max > buf->width)x_max = buf->width;
 	if (y_max > buf->height)y_max = buf->height;
 
-	v2 tile_origin = { tile_offset_px.x / tile->width,tile_offset_px.y / tile->height }; //UV offset
+	v2 tile_origin = tile_offset_percent; //UV offset
 	v2 tile_scale = { length(x_axis) / tile_size_px.x, length(y_axis) / tile_size_px.y };
 
 
@@ -709,13 +709,14 @@ v2 transform_to_screen_coords(v2 game_coords, f32 meters_to_pixels, v2 camera, v
 struct screen_coords_res {
 	v2 p_px;
 	bool valid;
-	f32 scale; //in case you want to scale other things with the same scaling that was applied to the point
+	f32 scale_px; //in case you want to scale other things with the same scaling that was applied to the point
 };
-screen_coords_res transform_to_screen_coords_perspective(v2 game_coords, f32 meters_to_pixels, v2 camera, v2 screen_center_px, f32 z_scale) {
+screen_coords_res transform_to_screen_coords_perspective(v2 game_coords, v2 camera, v2 screen_center_px, f32 z_scale, f32 meters_to_pixels) {
 	screen_coords_res res{0};
 
 	v3 raw_xy = V3( (game_coords - camera) , 1.f);
 
+	//TODO(fran): better values for this two, once I have straight to pixels push rendering (so I can check the mouse pos without all this)
 	f32 focal_length = .5f; //distance in meters from the viewer(camera) to the monitor
 
 	f32 z_camera_distance_above_ground = 1.f; //how far in meters the viewer(camera) is to the point
@@ -728,7 +729,7 @@ screen_coords_res transform_to_screen_coords_perspective(v2 game_coords, f32 met
 		v3 projected_xy = focal_length * raw_xy / z_distance_to_p;
 		
 		res.p_px = screen_center_px + projected_xy.xy * meters_to_pixels;
-		res.scale = projected_xy.z;
+		res.scale_px = projected_xy.z * meters_to_pixels;
 		res.valid = true;
 	}
 
@@ -749,7 +750,10 @@ f32 get_layer_scaling(layer_info* nfo, u32 idx) {
 
 void output_render_group(render_group* rg, img* output_target) {
 
-	v2 screen_center = v2_from_i32( output_target->width-1,output_target->height-1 )/2.f;
+	v2 screen_dim = v2_from_i32( output_target->width,output_target->height );
+	v2 screen_center = screen_dim*.5f;
+
+	f32 meters_to_pixels = screen_dim.x / 20.f; //resolution independent rendering
 
 	for (u32 base = 0; base < rg->push_buffer_used;) { //TODO(fran): use the basis, and define what is stored in meters and what in px
 		render_group_entry_header* header = (render_group_entry_header*)(rg->push_buffer_base + base);
@@ -777,11 +781,11 @@ void output_render_group(render_group* rg, img* output_target) {
 			v2 x_axis = v2{ axes.x, 0 } *rg->meters_to_pixels * z_scaling;
 			v2 y_axis = v2{0, axes .y} *rg->meters_to_pixels* z_scaling;
 #else 
-			screen_coords_res res = transform_to_screen_coords_perspective(entry->basis.origin, rg->meters_to_pixels, rg->camera, screen_center, get_layer_scaling(rg->layer_nfo, entry->basis.layer_idx));
+			screen_coords_res res = transform_to_screen_coords_perspective(entry->basis.origin, rg->camera, screen_center, get_layer_scaling(rg->layer_nfo, entry->basis.layer_idx),meters_to_pixels);
 			if (!res.valid)break;
 			v2 origin = res.p_px;
-			v2 x_axis = entry->basis.x_axis *rg->meters_to_pixels * res.scale;
-			v2 y_axis = entry->basis.y_axis *rg->meters_to_pixels * res.scale;
+			v2 x_axis = entry->basis.x_axis *res.scale_px;
+			v2 y_axis = entry->basis.y_axis *res.scale_px;
 #endif
 			game_render_rectangle(output_target, origin, x_axis, y_axis, entry->color);
 
@@ -802,25 +806,25 @@ void output_render_group(render_group* rg, img* output_target) {
 			game_assert(entry->image);
 			pos -= entry->image->alignment_px*z_scaling;//NOTE: I think the reason why this is a subtraction is that you want to bring the new center to where you are, it sort of makes sense in my head but im still a bit confused. You are not moving the center to a point, you are bringing a point to the center
 #else
-			screen_coords_res res = transform_to_screen_coords_perspective(entry->basis.origin, rg->meters_to_pixels, rg->camera, screen_center, get_layer_scaling(rg->layer_nfo, entry->basis.layer_idx));
+			screen_coords_res res = transform_to_screen_coords_perspective(entry->basis.origin, rg->camera, screen_center, get_layer_scaling(rg->layer_nfo, entry->basis.layer_idx), meters_to_pixels);
 			if (!res.valid)break;
 
-			v2 x_axis = entry->basis.x_axis * rg->meters_to_pixels * res.scale;
-			v2 y_axis = entry->basis.y_axis * rg->meters_to_pixels * res.scale;
+			v2 x_axis = entry->basis.x_axis * res.scale_px;
+			v2 y_axis = entry->basis.y_axis * res.scale_px;
 
 			v2 origin = res.p_px ;
 
 			game_assert(entry->image);
 			origin -= (entry->image->alignment_percent.x*x_axis + entry->image->alignment_percent.y * y_axis);
 #endif
-			game_render_rectangle(output_target, origin, x_axis, y_axis, {1,1,1,1}, entry->image, 0, 0, 0, 1.f / rg->meters_to_pixels);
+			game_render_rectangle(output_target, origin, x_axis, y_axis, {1,1,1,1}, entry->image, 0, 0, 0, 1.f / meters_to_pixels);
 		} break;
 		case RenderGroupEntryType_render_entry_coordinate_system:
 		{
 			render_entry_coordinate_system* entry = (render_entry_coordinate_system*)data;
 			base += sizeof(*entry);
 
-			game_render_rectangle(output_target, entry->origin, entry->x_axis, entry->y_axis, entry->color, entry->texture, entry->normal_map, entry->top_env_map, entry->bottom_env_map, 1.f / rg->meters_to_pixels);
+			game_render_rectangle(output_target, entry->origin, entry->x_axis, entry->y_axis, entry->color, entry->texture, entry->normal_map, entry->top_env_map, entry->bottom_env_map, 1.f / meters_to_pixels);
 
 			v2 center = entry->origin;
 			v2 radius = { 2,2 };
@@ -852,13 +856,13 @@ void output_render_group(render_group* rg, img* output_target) {
 			v2 tile_sz_px = entry->tile_size * rg->meters_to_pixels * z_scaling;
 #else
 			;
-			screen_coords_res res = transform_to_screen_coords_perspective(entry->basis.origin, rg->meters_to_pixels, rg->camera, screen_center, get_layer_scaling(rg->layer_nfo, entry->basis.layer_idx));
+			screen_coords_res res = transform_to_screen_coords_perspective(entry->basis.origin, rg->camera, screen_center, get_layer_scaling(rg->layer_nfo, entry->basis.layer_idx), meters_to_pixels);
 			if (!res.valid)break;
 
 			v2 origin = res.p_px;
-			v2 x_axis = entry->basis.x_axis * rg->meters_to_pixels * res.scale;
-			v2 y_axis = entry->basis.y_axis * rg->meters_to_pixels * res.scale;
-			v2 tile_sz_px = entry->tile_size * rg->meters_to_pixels * res.scale;
+			v2 x_axis = entry->basis.x_axis * res.scale_px;
+			v2 y_axis = entry->basis.y_axis * res.scale_px;
+			v2 tile_sz_px = entry->tile_size * res.scale_px;
 #endif
 			game_render_tileable(output_target, origin, x_axis, y_axis, entry->mask, entry->tile, entry->tile_offset_percent, tile_sz_px);
 		} break;
