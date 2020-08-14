@@ -46,7 +46,7 @@ struct img {
     i32 width;
     i32 height;
     i32 pitch;
-    v2 alignment_px; //NOTE: offset from the center of the img that moves its position
+    v2 alignment_percent; //NOTE: offset from the bottom left of the img that moves its position
     void* mem;
 };
 
@@ -177,6 +177,8 @@ struct game_world{
     u32 current_stage;
 };
 
+#define PERSPECTIVE 1
+
 #include "space_typers_render_group.cpp"
 
 struct pairwise_collision_rule {
@@ -201,10 +203,6 @@ struct game_state {
     //int xoff;
     //int yoff;
     //int hz;
-    //f32 word_height_meters;
-    //i32 word_height_pixels;
-    f32 word_meters_to_pixels;
-    f32 word_pixels_to_meters;
     //v2 lower_left_pixels;
     game_world world;//TODO(fran): for now there'll only be one world but we may add support for more later
     game_memory_arena permanent_arena;

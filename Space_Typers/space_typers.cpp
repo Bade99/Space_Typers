@@ -819,10 +819,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         //gs->word_height_meters = 1.f;
         //gs->word_height_pixels = 60;
 
-        gs->word_meters_to_pixels = 40;// (f32)gs->word_height_pixels / gs->word_height_meters; //Transform from meters to pixels
-
-        gs->word_pixels_to_meters = 1 / gs->word_meters_to_pixels;
-
         initialize_arena(&gs->permanent_arena, (u8*)memory->permanent_storage + sizeof(game_state), memory->permanent_storage_sz - sizeof(game_state));
 
         gs->world.stages = push_type(&gs->permanent_arena,game_stage);
@@ -875,16 +871,12 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         }
         
         gs->DEBUG_background = DEBUG_load_png("assets/img/background.png"); //TODO(fran): release mem DEBUG_unload_png();
-        //gs->DEBUG_background.align = { 20,20 };
-        gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
-        set_bottom_up_alignment(&gs->DEBUG_menu, { (f32)(gs->DEBUG_menu.width - 1) / 2.f,(f32)(gs->DEBUG_menu.height - 1) * .1f });
-        //gs->DEBUG_menu.align = { 20,20 };
-        gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
-        //gs->DEBUG_mouse.alignment_px = v2_from_i32( -gs->DEBUG_mouse.width / 2,gs->DEBUG_mouse.height / 2 );
-        set_bottom_up_alignment(&gs->DEBUG_mouse, {0.f,(f32)gs->DEBUG_mouse.height-1.f }); //REMEMBER: always subtract 1 from width or height
-        
-        //TODO(fran): check that every time I calculate the center I subtract 1 from width and height
+        set_bottom_up_alignment(&gs->DEBUG_background, .5f, .5f);
 
+        gs->DEBUG_menu = DEBUG_load_png("assets/img/braid.png"); //TODO(fran): release mem DEBUG_unload_png();
+        gs->DEBUG_mouse = DEBUG_load_png("assets/img/mouse.png"); //TODO(fran): release mem DEBUG_unload_png();
+        set_bottom_up_alignment(&gs->DEBUG_mouse, .0f, 1.f);
+        
         gs->word_border = DEBUG_load_png("assets/img/word_border.png");
         gs->word_corner = DEBUG_load_png("assets/img/word_corner.png");
         gs->word_inside = DEBUG_load_png("assets/img/word_inside.png");
@@ -958,9 +950,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     game_assert(gs->entities[0].type == entity_null);
     layer_info* layer_nfo = &gs->world.stages[gs->world.current_stage].lvls[gs->world.stages[gs->world.current_stage].current_lvl].layer_nfo;
     //Update & Render Prep Loop
-    render_group* rg = allocate_render_group(&gs->one_frame_arena,gs->word_meters_to_pixels,&gs->camera,Megabytes(1), layer_nfo);
 
-    clear(rg, v4{ .25f,.25f,.25f,1.f });
+    
 
     //TODO(fran): Z for scaling
     if (input->controller.mouse.z != 0) {
@@ -973,11 +964,6 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     if (input->controller.enter.ended_down) {
         show_boundaries = !show_boundaries;
     }
-
-    img background = gs->DEBUG_background;
-    background.height = 540;
-    background.width = 960;
-    push_img(rg, { 10.f,10.f }, &background, 0);
 
     for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) { //NOTE: remember to start from 1
         game_entity& e= gs->entities[entity_index];
@@ -1010,42 +996,17 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             //v2 screen_offset = { (f32)frame_buf->width / 2,(f32)frame_buf->height / 2 };
             gs->camera = e.pos; //TODO(fran): nicer camera update, lerp //TODO(fran): where to update the camera? //TODO(fran): camera position should be on the center, and at the time of drawing account for width and height from there
 
-            push_img(rg, e.pos + e.collision.total_area.offset, &gs->DEBUG_menu,1);
-
         } break;
         case entity_wall: 
         {
-            e.anim_wall_texture += input->dt_sec*100.f;
-            if (e.anim_wall_texture > (f32)gs->wall_tile.height) e.anim_wall_texture = 0;
-            v2 origin = e.pos + e.collision.total_area.offset - e.collision.total_area.radius;
-#if 1
-            v2 x_axis = { e.collision.total_area.radius.x * 2 ,0 };
-            v2 y_axis = { 0,e.collision.total_area.radius.y * 2 };
-#else
-            v2 x_axis = v2{ cosf(gs->time),sinf(gs->time) };
-            v2 y_axis = (e.collision.total_area.radius.y * 2) * perp(x_axis);
-            x_axis *= (e.collision.total_area.radius.x * 2);
-#endif
-            push_tileable(rg, origin, x_axis, y_axis, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1,1 }*1.f,e.z_layer);
+            e.anim_wall_texture += input->dt_sec*.5f;
+            if (e.anim_wall_texture > 1.f) e.anim_wall_texture = 0.f;
+            //TODO(fran): move_entity aka moving walls?
         } break;
-        case entity_word: 
+        case entity_word:
         {
             move_entity(&e, {0,0}, gs, input);
-
-            push_img(rg, e.pos, &e.image,e.z_layer);
-
-            //stbtt_fontinfo font; //TODO(fran): insert the font again!
-            //int width, height;
-            //platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); //TODO(fran): fonts folder inside /assets
-            //stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
-            //u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), e->txt[0], &width, &height, 0, 0);
-            //render_char(&framebuffer,
-            //    transform_to_screen_coords(rc_center_radius(e->pos, v2{ (f32)width / 2.f,(f32)height / 2.f }*gs->word_pixels_to_meters),
-            //        gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels), bitmap, width, height);
-            //platform_free_file_memory(f.mem);
-            //stbtt_FreeBitmap(bitmap, 0);
-
-
+            //NOTE: when words spawn they could scale from super small to normal, so in some levels we can show the word_spawner and it doesnt look weird how they come out of it
         } break;
         case entity_word_spawner:
         {
@@ -1060,12 +1021,58 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 #endif
             }
         } break;
-        case entity_null: game_assert(0);
+        default: game_assert(0);
+        }
+    }
+
+    //Render Prep Loop
+    render_group* rg = allocate_render_group(&gs->one_frame_arena, gs->camera, Megabytes(1), layer_nfo);
+    clear(rg, v4{ .25f,.25f,.25f,1.f });
+
+    push_img(rg, { 10.f,10.f }, { 16.f,0.f }, { 0.f,9.f }, 0, &gs->DEBUG_background);
+
+    for (u32 entity_index = 1; entity_index < gs->entity_count; entity_index++) {
+        game_entity& e = gs->entities[entity_index];
+        switch (gs->entities[entity_index].type) {
+        case entity_player:
+        {
+            push_img(rg, e.pos + e.collision.total_area.offset - e.collision.total_area.radius, v2{ e.collision.total_area.radius.x * 2.f ,0.f }, v2{ 0.f, e.collision.total_area.radius.y * 2.f }, 1, &gs->DEBUG_menu);
+        } break;
+        case entity_wall:
+        {
+            v2 origin = e.pos + e.collision.total_area.offset - e.collision.total_area.radius;
+#if 1
+            v2 x_axis = { e.collision.total_area.radius.x * 2 ,0 };
+            v2 y_axis = { 0,e.collision.total_area.radius.y * 2 };
+#else
+            v2 x_axis = v2{ cosf(gs->time),sinf(gs->time) };
+            v2 y_axis = (e.collision.total_area.radius.y * 2) * perp(x_axis);
+            x_axis *= (e.collision.total_area.radius.x * 2);
+#endif
+            push_tileable(rg, origin, x_axis, y_axis, e.z_layer, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1.f,1.f }*1.f);
+        } break;
+        case entity_word:
+        {
+            push_img(rg, e.pos + e.collision.total_area.offset - e.collision.total_area.radius, v2{ e.collision.total_area.radius.x * 2.f ,0.f }, v2{ 0.f, e.collision.total_area.radius.y * 2.f }, e.z_layer, & e.image);
+            //stbtt_fontinfo font; //TODO(fran): insert the font again!
+            //int width, height;
+            //platform_read_entire_file_res f = platform_read_entire_file("c:/windows/fonts/arial.ttf"); //TODO(fran): fonts folder inside /assets
+            //stbtt_InitFont(&font, (u8*)f.mem, stbtt_GetFontOffsetForIndex((u8*)f.mem, 0));
+            //u8* bitmap = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, 50.f), e->txt[0], &width, &height, 0, 0);
+            //render_char(&framebuffer,
+            //    transform_to_screen_coords(rc_center_radius(e->pos, v2{ (f32)width / 2.f,(f32)height / 2.f }*gs->word_pixels_to_meters),
+            //        gs->word_meters_to_pixels, gs->camera, gs->lower_left_pixels), bitmap, width, height);
+            //platform_free_file_memory(f.mem);
+            //stbtt_FreeBitmap(bitmap, 0);
+        } break;
+        case entity_word_spawner:
+        {
+            //TODO
+        } break;
         default: game_assert(0);
         }
         if (show_boundaries)
-            push_rect_boundary(rg, rc_center_radius(e.pos + e.collision.total_area.offset, e.collision.total_area.radius),e.color,e.z_layer);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
-        //TODO(fran): rect boundary doesnt work with scaling, maybe we should create a new render_entry for it, containing an rc and thickness, another reason for it being wrong could be that we arent scaling the thickness, TRY THAT
+            push_rect_boundary(rg, e.pos + e.collision.total_area.offset - e.collision.total_area.radius, v2{ e.collision.total_area.radius.x * 2.f ,0.f }, v2{ 0.f, e.collision.total_area.radius.y * 2.f }, e.z_layer, e.color);//TODO(fran): iterate over all collision areas and render each one //TODO(fran): bounding box should render above imgs
     }
 
     img framebuffer;
@@ -1075,10 +1082,13 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     framebuffer.pitch = frame_buf->pitch;
     
     //TODO(fran): the mouse still comes in y is down coordinates, maybe I should ask for the platform to always send y is up
-    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * gs->word_pixels_to_meters;
-    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * gs->word_pixels_to_meters;
+    f32 mousey = gs->camera.y + ((f32)framebuffer.height*.5f - input->controller.mouse.y) * (1.f/ rg->meters_to_pixels); //TODO(fran): straight to pixels push rendering options
+    f32 mousex = gs->camera.x + (input->controller.mouse.x - (f32)framebuffer.width * .5f) * (1.f / rg->meters_to_pixels);
 
-    push_img(rg, { mousex,mousey}, &gs->DEBUG_mouse,2);
+    v2 mouse_x_axis = {3.f,0.f};
+    v2 mouse_y_axis = {0.f,3.f};
+
+    push_img(rg, { mousex,mousey}, mouse_x_axis, mouse_y_axis, 2, &gs->DEBUG_mouse); //TODO(fran): push_img_screen_position //TODO(fran): alignment so the mouse top left is at windows'normal mouse position
 
 
     //game_render_img_ignore_transparency(&framebuffer,  , &gs->DEBUG_background);
