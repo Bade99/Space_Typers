@@ -339,7 +339,6 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 	for (int y = y_min; y < y_max; y++) {
 		u32* pixel = (u32*)row;
 		for (int x = x_min; x < x_max; x++) {
-			START_TIMED_BLOCK(test_pixel);
 			//AARRGGBB
 			//NOTE: normals come out of the shape
 
@@ -357,7 +356,6 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 			f32 u = dot(d, x_axis) * inv_x_axis_length_sq; //Texture mapping, handmade day 93 18:00
 			f32 v = dot(d, y_axis) * inv_y_axis_length_sq;
 			if (u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f) { //NOTE REMEMBER: u v gives you pixel filtering for free, no need to check against the edges of the rectangle explicitly
-				START_TIMED_BLOCK(fill_pixel);
 				
 				f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
 				f32 t_y = v * (f32)(texture->height - 2);
@@ -502,11 +500,9 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 
 				*pixel = round_f32_to_i32(blended255.a) << 24 | round_f32_to_i32(blended255.r) << 16 | round_f32_to_i32(blended255.g) << 8 | round_f32_to_i32(blended255.b) << 0; //TODO(fran): should use round_f32_to_u32?
 
-				END_TIMED_BLOCK(fill_pixel);
 			}
 			pixel++;
 			
-			END_TIMED_BLOCK(test_pixel);
 		}
 		row += buf->pitch;
 	}
@@ -715,16 +711,12 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 
 	v2 n_x_axis = x_axis * inv_x_axis_length_sq;
 	v2 n_y_axis = y_axis * inv_y_axis_length_sq;
-
+	
 	f32 x_axis_lenght = length(x_axis);
 	f32 y_axis_lenght = length(y_axis);
 
 	i32 width_max = buf->width - 1     - 3; //TODO(fran): remove, quick hack for getting avx working and not writing to the other side of the screen
 	i32 height_max = buf->height - 1   - 3;
-
-	f32 inv255 = 1.f / 255.f;
-
-	f32 one_255 = 255.f;
 
 	i32 x_min = width_max;
 	i32 x_max = 0;
@@ -749,61 +741,87 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 	if (x_max > width_max)x_max = width_max;
 	if (y_max > height_max)y_max = height_max;
 
+	__m256 origin_x = _mm256_set1_ps(origin.x);
+	__m256 origin_y = _mm256_set1_ps(origin.y);
+	__m256 n_x_axis_x = _mm256_set1_ps(n_x_axis.x);
+	__m256 n_x_axis_y = _mm256_set1_ps(n_x_axis.y);
+	__m256 n_y_axis_x = _mm256_set1_ps(n_y_axis.x);
+	__m256 n_y_axis_y = _mm256_set1_ps(n_y_axis.y);
+	__m256 one = _mm256_set1_ps(1.f);
+	__m256 zero = _mm256_set1_ps(.0f);
+	__m256 one_255 = _mm256_set1_ps(255.f);
+	__m256 inv255 = _mm256_set1_ps(1.f / 255.f);
+	__m256 color_r = _mm256_set1_ps(color.r);
+	__m256 color_g = _mm256_set1_ps(color.g);
+	__m256 color_b = _mm256_set1_ps(color.b);
+	__m256 color_a = _mm256_set1_ps(color.a);
+
 	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
 
+	START_TIMED_BLOCK(process_pixel);
 	for (int y = y_min; y <= y_max; y++) {
 		u32* pixel = (u32*)row;
 		for (int x_it = x_min; x_it <= x_max; x_it += 8) {
-			START_TIMED_BLOCK(test_pixel);
 
-			f32 unpacked_A_r[8];
-			f32 unpacked_A_g[8];
-			f32 unpacked_A_b[8];
-			f32 unpacked_A_a[8];
-				
-			f32 unpacked_B_r[8];
-			f32 unpacked_B_g[8];
-			f32 unpacked_B_b[8];
-			f32 unpacked_B_a[8];
-				
-			f32 unpacked_C_r[8];
-			f32 unpacked_C_g[8];
-			f32 unpacked_C_b[8];
-			f32 unpacked_C_a[8];
-				
-			f32 unpacked_D_r[8];
-			f32 unpacked_D_g[8];
-			f32 unpacked_D_b[8];
-			f32 unpacked_D_a[8];
+			__m256 texel_A_r = _mm256_set1_ps(.0f);
+			__m256 texel_A_g = _mm256_set1_ps(.0f);
+			__m256 texel_A_b = _mm256_set1_ps(.0f);
+			__m256 texel_A_a = _mm256_set1_ps(.0f);
+							 
+			__m256 texel_B_r = _mm256_set1_ps(.0f);
+			__m256 texel_B_g = _mm256_set1_ps(.0f);
+			__m256 texel_B_b = _mm256_set1_ps(.0f);
+			__m256 texel_B_a = _mm256_set1_ps(.0f);
+							 
+			__m256 texel_C_r = _mm256_set1_ps(.0f);
+			__m256 texel_C_g = _mm256_set1_ps(.0f);
+			__m256 texel_C_b = _mm256_set1_ps(.0f);
+			__m256 texel_C_a = _mm256_set1_ps(.0f);
+							 
+			__m256 texel_D_r = _mm256_set1_ps(.0f);
+			__m256 texel_D_g = _mm256_set1_ps(.0f);
+			__m256 texel_D_b = _mm256_set1_ps(.0f);
+			__m256 texel_D_a = _mm256_set1_ps(.0f);
 
 			bool should_fill[8];
 
-			f32 dest_r[8];
-			f32 dest_g[8];
-			f32 dest_b[8];
-			f32 dest_a[8];
+			__m256 dest_r = _mm256_set1_ps(.0f);
+			__m256 dest_g = _mm256_set1_ps(.0f);
+			__m256 dest_b = _mm256_set1_ps(.0f);
+			__m256 dest_a = _mm256_set1_ps(.0f);
 
-			f32 f_x[8];
-			f32 f_y[8];
+			__m256 f_x = _mm256_set1_ps(.0f);
+			__m256 f_y = _mm256_set1_ps(.0f);
 
-			for (i32 p_idx = 0; p_idx < 8; p_idx++) {//NOTE:REMEMBER: now I understand why he said you waste some part of the lane on the right border, you're still gonna be clipping by uv and just moving in x for the lanes
-				v2 p = { (f32)(x_it + p_idx), (f32)y };
-				v2 d = p - origin;
-				f32 u = dot(d, n_x_axis); //Texture mapping, handmade day 93 18:00
-				f32 v = dot(d, n_y_axis);
+			__m256 blended_r;
+			__m256 blended_g;
+			__m256 blended_b;
+			__m256 blended_a;
 
-				should_fill[p_idx] = u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f;
+			//NOTE: REMEMBER: (still inside the for loop from 0 to 8) somehow just reducing this 3 (from p_x to u) to their basic form, without doing any SIMD, removed almost 30 cycles, wtf? yet again Zero Cost Abstractions do NOT exist (2020 msvc)
+			__m256 p_x = _mm256_set_ps( (f32)(x_it + 7), (f32)(x_it + 6), (f32)(x_it + 5), (f32)(x_it + 4), (f32)(x_it + 3), (f32)(x_it + 2), (f32)(x_it + 1), (f32)(x_it + 0));
+			__m256 p_y = _mm256_set1_ps((f32)y);
+			//p - origin
+			__m256 d_x = _mm256_sub_ps(p_x, origin_x);
+			__m256 d_y = _mm256_sub_ps(p_y, origin_y);
+			//dot for uv texture mapping
+			__m256 u = _mm256_add_ps(_mm256_mul_ps(d_x, n_x_axis_x), _mm256_mul_ps(d_y, n_x_axis_y));
+			__m256 v = _mm256_add_ps(_mm256_mul_ps(d_x, n_y_axis_x), _mm256_mul_ps(d_y, n_y_axis_y));
+
+			for (i32 p_idx = 0; p_idx < 8; p_idx++){
+
+				should_fill[p_idx] = u.m256_f32[p_idx] >= 0.f && u.m256_f32[p_idx] <= 1.f && v.m256_f32[p_idx] >= 0.f && v.m256_f32[p_idx] <= 1.f;
 				if (should_fill[p_idx]) {
 					//START_TIMED_BLOCK(fill_pixel);
 
-					f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
-					f32 t_y = v * (f32)(texture->height - 2);
+					f32 t_x = u.m256_f32[p_idx] * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
+					f32 t_y = v.m256_f32[p_idx] * (f32)(texture->height - 2);
 
 					i32 i_x = (i32)t_x;
 					i32 i_y = (i32)t_y;
 
-					f_x[p_idx] = t_x - (f32)i_x;
-					f_y[p_idx] = t_y - (f32)i_y;
+					f_x.m256_f32[p_idx] = t_x - (f32)i_x;
+					f_y.m256_f32[p_idx] = t_y - (f32)i_y;
 
 					game_assert(i_x >= 0 && i_x < texture->width);
 					game_assert(i_y >= 0 && i_y < texture->height);
@@ -816,117 +834,114 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 					u32 packed_D = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
 
 					//unpack_4x8 for 4 samples
-					unpacked_A_r[p_idx] = (f32)((packed_A >> 16) & 0xFF);
-					unpacked_A_g[p_idx] = (f32)((packed_A >> 8) & 0xFF);
-					unpacked_A_b[p_idx] = (f32)((packed_A >> 0) & 0xFF);
-					unpacked_A_a[p_idx] = (f32)((packed_A >> 24) & 0xFF);
-								 
-					unpacked_B_r[p_idx] = (f32)((packed_B >> 16) & 0xFF);
-					unpacked_B_g[p_idx] = (f32)((packed_B >> 8) & 0xFF);
-					unpacked_B_b[p_idx] = (f32)((packed_B >> 0) & 0xFF);
-					unpacked_B_a[p_idx] = (f32)((packed_B >> 24) & 0xFF);
-								 
-					unpacked_C_r[p_idx] = (f32)((packed_C >> 16) & 0xFF);
-					unpacked_C_g[p_idx] = (f32)((packed_C >> 8) & 0xFF);
-					unpacked_C_b[p_idx] = (f32)((packed_C >> 0) & 0xFF);
-					unpacked_C_a[p_idx] = (f32)((packed_C >> 24) & 0xFF);
-								 
-					unpacked_D_r[p_idx] = (f32)((packed_D >> 16) & 0xFF);
-					unpacked_D_g[p_idx] = (f32)((packed_D >> 8) & 0xFF);
-					unpacked_D_b[p_idx] = (f32)((packed_D >> 0) & 0xFF);
-					unpacked_D_a[p_idx] = (f32)((packed_D >> 24) & 0xFF);
+					texel_A_r.m256_f32[p_idx] = (f32)((packed_A >> 16) & 0xFF);
+					texel_A_g.m256_f32[p_idx] = (f32)((packed_A >> 8) & 0xFF);
+					texel_A_b.m256_f32[p_idx] = (f32)((packed_A >> 0) & 0xFF);
+					texel_A_a.m256_f32[p_idx] = (f32)((packed_A >> 24) & 0xFF);
+						 	 
+					texel_B_r.m256_f32[p_idx] = (f32)((packed_B >> 16) & 0xFF);
+					texel_B_g.m256_f32[p_idx] = (f32)((packed_B >> 8) & 0xFF);
+					texel_B_b.m256_f32[p_idx] = (f32)((packed_B >> 0) & 0xFF);
+					texel_B_a.m256_f32[p_idx] = (f32)((packed_B >> 24) & 0xFF);
+							 
+					texel_C_r.m256_f32[p_idx] = (f32)((packed_C >> 16) & 0xFF);
+					texel_C_g.m256_f32[p_idx] = (f32)((packed_C >> 8) & 0xFF);
+					texel_C_b.m256_f32[p_idx] = (f32)((packed_C >> 0) & 0xFF);
+					texel_C_a.m256_f32[p_idx] = (f32)((packed_C >> 24) & 0xFF);
+							 
+					texel_D_r.m256_f32[p_idx] = (f32)((packed_D >> 16) & 0xFF);
+					texel_D_g.m256_f32[p_idx] = (f32)((packed_D >> 8) & 0xFF);
+					texel_D_b.m256_f32[p_idx] = (f32)((packed_D >> 0) & 0xFF);
+					texel_D_a.m256_f32[p_idx] = (f32)((packed_D >> 24) & 0xFF);
 
 					//unpack_4x8
-					dest_r[p_idx] = (f32)((*(pixel+p_idx) >> 16) & 0xFF);
-					dest_g[p_idx] = (f32)((*(pixel+p_idx) >> 8) & 0xFF);
-					dest_b[p_idx] = (f32)((*(pixel+p_idx) >> 0) & 0xFF);
-					dest_a[p_idx] = (f32)((*(pixel+p_idx) >> 24) & 0xFF);
+					dest_r.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 16) & 0xFF);
+					dest_g.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 8) & 0xFF);
+					dest_b.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 0) & 0xFF);
+					dest_a.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 24) & 0xFF);
 				}
 			}
+			
+			//TODO(fran): check that the compiler doesnt compute "a" twice //NOTE: in debug it DOES replicate the operations, the good part is the result is the same since each intermediate result is not stored in any of the operands but in a new variable, so it does do mul(mul,mul) instead of a=mul -> mul(a,a) but they give the same result. 
+			//	In release it think it does it right, TODO(fran): might be better to remove the macros and test?
+#define _mm256_square_ps(a) _mm256_mul_ps(a,a)
 
-			f32 blended_r[8];
-			f32 blended_g[8];
-			f32 blended_b[8];
-			f32 blended_a[8];
+			//srgb255_to_linear1 for 4 samples
+			texel_A_r = _mm256_square_ps(_mm256_mul_ps( texel_A_r, inv255));
+			texel_A_g = _mm256_square_ps(_mm256_mul_ps( texel_A_g, inv255));
+			texel_A_b = _mm256_square_ps(_mm256_mul_ps( texel_A_b, inv255));
+			texel_A_a = _mm256_mul_ps(texel_A_a, inv255);
 
-			for (i32 p_idx = 0; p_idx < 8; p_idx++) {
-				//srgb255_to_linear1 for 4 samples
-				unpacked_A_r[p_idx] = squared(unpacked_A_r[p_idx] * inv255);
-				unpacked_A_g[p_idx] = squared(unpacked_A_g[p_idx] * inv255);
-				unpacked_A_b[p_idx] = squared(unpacked_A_b[p_idx] * inv255);
-				unpacked_A_a[p_idx] = unpacked_A_a[p_idx] * inv255;
-							
-				unpacked_B_r[p_idx] = squared(unpacked_B_r[p_idx] * inv255);
-				unpacked_B_g[p_idx] = squared(unpacked_B_g[p_idx] * inv255);
-				unpacked_B_b[p_idx] = squared(unpacked_B_b[p_idx] * inv255);
-				unpacked_B_a[p_idx] = unpacked_B_a[p_idx] * inv255;
-							
-				unpacked_C_r[p_idx] = squared(unpacked_C_r[p_idx] * inv255);
-				unpacked_C_g[p_idx] = squared(unpacked_C_g[p_idx] * inv255);
-				unpacked_C_b[p_idx] = squared(unpacked_C_b[p_idx] * inv255);
-				unpacked_C_a[p_idx] = unpacked_C_a[p_idx] * inv255;
-							
-				unpacked_D_r[p_idx] = squared(unpacked_D_r[p_idx] * inv255);
-				unpacked_D_g[p_idx] = squared(unpacked_D_g[p_idx] * inv255);
-				unpacked_D_b[p_idx] = squared(unpacked_D_b[p_idx] * inv255);
-				unpacked_D_a[p_idx] = unpacked_D_a[p_idx] * inv255;
+			texel_B_r = _mm256_square_ps(_mm256_mul_ps(texel_B_r, inv255));
+			texel_B_g = _mm256_square_ps(_mm256_mul_ps(texel_B_g, inv255));
+			texel_B_b = _mm256_square_ps(_mm256_mul_ps(texel_B_b, inv255));
+			texel_B_a = _mm256_mul_ps(texel_B_a, inv255);
 
-				//lerp(lerp(),lerp())
-				f32 f_x_rem = 1.f - f_x[p_idx];
-				f32 f_y_rem = 1.f - f_y[p_idx];
-				f32 l0 = f_y_rem * f_x_rem;
-				f32 l1 = f_y_rem * f_x[p_idx];
-				f32 l2 = f_y[p_idx] * f_x_rem;
-				f32 l3 = f_y[p_idx] * f_x[p_idx];
-				f32 texel_r = l0 * unpacked_A_r[p_idx] + l1 * unpacked_B_r[p_idx] + l2 * unpacked_C_r[p_idx] + l3 * unpacked_D_r[p_idx];
-				f32 texel_g = l0 * unpacked_A_g[p_idx] + l1 * unpacked_B_g[p_idx] + l2 * unpacked_C_g[p_idx] + l3 * unpacked_D_g[p_idx];
-				f32 texel_b = l0 * unpacked_A_b[p_idx] + l1 * unpacked_B_b[p_idx] + l2 * unpacked_C_b[p_idx] + l3 * unpacked_D_b[p_idx];
-				f32 texel_a = l0 * unpacked_A_a[p_idx] + l1 * unpacked_B_a[p_idx] + l2 * unpacked_C_a[p_idx] + l3 * unpacked_D_a[p_idx];
+			texel_C_r = _mm256_square_ps(_mm256_mul_ps(texel_C_r, inv255));
+			texel_C_g = _mm256_square_ps(_mm256_mul_ps(texel_C_g, inv255));
+			texel_C_b = _mm256_square_ps(_mm256_mul_ps(texel_C_b, inv255));
+			texel_C_a = _mm256_mul_ps(texel_C_a, inv255);
 
-				//hadamard
-				texel_r = texel_r * color.r;
-				texel_g = texel_g * color.g;
-				texel_b = texel_b * color.b;
-				texel_a = texel_a * color.a;
+			texel_D_r = _mm256_square_ps(_mm256_mul_ps(texel_D_r, inv255));
+			texel_D_g = _mm256_square_ps(_mm256_mul_ps(texel_D_g, inv255));
+			texel_D_b = _mm256_square_ps(_mm256_mul_ps(texel_D_b, inv255));
+			texel_D_a = _mm256_mul_ps(texel_D_a, inv255);
 
-				texel_r = clamp01(texel_r);
-				texel_g = clamp01(texel_g);
-				texel_b = clamp01(texel_b);
-				texel_a = clamp01(texel_a);
+			//lerp(lerp(),lerp())
+			__m256 f_x_rem = _mm256_sub_ps(one, f_x);
+			__m256 f_y_rem = _mm256_sub_ps(one, f_y);
+			__m256 l0 = _mm256_mul_ps(f_y_rem, f_x_rem);
+			__m256 l1 = _mm256_mul_ps(f_y_rem, f_x);
+			__m256 l2 = _mm256_mul_ps(f_y, f_x_rem);
+			__m256 l3 = _mm256_mul_ps(f_y, f_x);
+			__m256 texel_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_r), _mm256_mul_ps(l1, texel_B_r)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_r), _mm256_mul_ps(l3, texel_D_r)));
+			__m256 texel_g = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_g), _mm256_mul_ps(l1, texel_B_g)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_g), _mm256_mul_ps(l3, texel_D_g)));
+			__m256 texel_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_b), _mm256_mul_ps(l1, texel_B_b)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_b), _mm256_mul_ps(l3, texel_D_b)));
+			__m256 texel_a = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_a), _mm256_mul_ps(l1, texel_B_a)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_a), _mm256_mul_ps(l3, texel_D_a)));
 
-				//srgb255_to_linear1
-				dest_r[p_idx] = squared(dest_r[p_idx] * inv255);
-				dest_g[p_idx] = squared(dest_g[p_idx] * inv255);
-				dest_b[p_idx] = squared(dest_b[p_idx] * inv255);
-				dest_a[p_idx] = dest_a[p_idx] * inv255;
+			//hadamard
+			texel_r = _mm256_mul_ps(texel_r, color_r);
+			texel_g = _mm256_mul_ps(texel_g, color_g);
+			texel_b = _mm256_mul_ps(texel_b, color_b);
+			texel_a = _mm256_mul_ps(texel_a, color_a);
 
-				//v4 blended = (1.f - texel.a) * dest + texel;
-				f32 texel_a_rem = (1.f - texel_a);
-				blended_r[p_idx] = texel_a_rem * dest_r[p_idx] + texel_r;
-				blended_g[p_idx] = texel_a_rem * dest_g[p_idx] + texel_g;
-				blended_b[p_idx] = texel_a_rem * dest_b[p_idx] + texel_b;
-				blended_a[p_idx] = texel_a_rem * dest_a[p_idx] + texel_a;
+			//clamp01
+			texel_r = _mm256_min_ps(_mm256_max_ps(texel_r, zero),one);
+			texel_g = _mm256_min_ps(_mm256_max_ps(texel_g, zero),one);
+			texel_b = _mm256_min_ps(_mm256_max_ps(texel_b, zero),one);
+			texel_a = _mm256_min_ps(_mm256_max_ps(texel_a, zero),one);
 
-				//linear1_to_srgb255
-				blended_r[p_idx] = square_root(blended_r[p_idx]) * one_255;
-				blended_g[p_idx] = square_root(blended_g[p_idx]) * one_255;
-				blended_b[p_idx] = square_root(blended_b[p_idx]) * one_255;
-				blended_a[p_idx] = blended_a[p_idx] * one_255;
-			}
+			//srgb255_to_linear1
+			dest_r = _mm256_square_ps(_mm256_mul_ps(dest_r, inv255));
+			dest_g = _mm256_square_ps(_mm256_mul_ps(dest_g, inv255));
+			dest_b = _mm256_square_ps(_mm256_mul_ps(dest_b, inv255));
+			dest_a = _mm256_mul_ps(dest_a, inv255);
+
+			//v4 blended = (1.f - texel.a) * dest + texel;
+			__m256 texel_a_rem = _mm256_sub_ps(one, texel_a);
+			blended_r = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_r), texel_r);
+			blended_g = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_g), texel_g);
+			blended_b = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_b), texel_b);
+			blended_a = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_a), texel_a);
+
+			//linear1_to_srgb255
+			blended_r = _mm256_mul_ps(_mm256_sqrt_ps(blended_r), one_255);
+			blended_g = _mm256_mul_ps(_mm256_sqrt_ps(blended_g), one_255);
+			blended_b = _mm256_mul_ps(_mm256_sqrt_ps(blended_b), one_255);
+			blended_a = _mm256_mul_ps(blended_a, one_255);
 
 			for (i32 p_idx = 0; p_idx < 8; p_idx++) {
 				//round_f32_to_u32 & write
 				if(should_fill[p_idx])
-					*(pixel+p_idx) = (u32)(blended_a[p_idx] + .5f) << 24 | (u32)(blended_r[p_idx] + .5f) << 16 | (u32)(blended_g[p_idx] + .5f) << 8 | (u32)(blended_b[p_idx] + .5f) << 0;
+					*(pixel+p_idx) = (u32)(blended_a.m256_f32[p_idx] + .5f) << 24 | (u32)(blended_r.m256_f32[p_idx] + .5f) << 16 | (u32)(blended_g.m256_f32[p_idx] + .5f) << 8 | (u32)(blended_b.m256_f32[p_idx] + .5f) << 0;
 
 			}
 					//END_TIMED_BLOCK(fill_pixel);
 			pixel+=8;
-			END_TIMED_BLOCK(test_pixel);
 		}
-
 		row += buf->pitch;
 	}
+	END_TIMED_BLOCK_COUNTED(process_pixel,(x_max-x_min+1)*(y_max - y_min + 1));
 
 	END_TIMED_BLOCK(game_render_rectangle_fast);
 }

@@ -52,9 +52,8 @@ enum
     /* 0 */ debug_cycle_counter_game_update_and_render,
     /* 1 */ debug_cycle_counter_output_render_group,
     /* 2 */ debug_cycle_counter_game_render_rectangle,
-    /* 3 */ debug_cycle_counter_test_pixel,
-    /* 4 */ debug_cycle_counter_fill_pixel,
-    /* 5 */ debug_cycle_counter_game_render_rectangle_fast,
+    /* 3 */ debug_cycle_counter_process_pixel,
+    /* 4 */ debug_cycle_counter_game_render_rectangle_fast,
 
     /* n+1 */ debug_cycle_counter_COUNT,
 };
@@ -74,6 +73,8 @@ void handle_global_cycle_counter() {
 #define RESET_TIMED_BLOCKS zero_struct(global_cycle_counter);
 #define START_TIMED_BLOCK(id) u64 cycle_start##id = __rdtsc();
 #define END_TIMED_BLOCK(id) global_cycle_counter[debug_cycle_counter_##id] = { global_cycle_counter[debug_cycle_counter_##id].cycles_elapsed + __rdtsc() - cycle_start##id,global_cycle_counter[debug_cycle_counter_##id].hit_count+1,#id};
+#define END_TIMED_BLOCK_COUNTED(id,count) global_cycle_counter[debug_cycle_counter_##id] = { global_cycle_counter[debug_cycle_counter_##id].cycles_elapsed + __rdtsc() - cycle_start##id,global_cycle_counter[debug_cycle_counter_##id].hit_count+count,#id};
+//NOTE: the idea of the _COUNTED macro is that you can approximate a similar value to using the regular _TIMED_BLOCK but without calling it on each iteration and thus reducing cache pollution
 #else
 
 #endif
@@ -83,6 +84,7 @@ void handle_global_cycle_counter(){}
 #define RESET_TIMED_BLOCKS 
 #define START_TIMED_BLOCK(id) 
 #define END_TIMED_BLOCK(id) 
+#define END_TIMED_BLOCK_COUNTED(id,count) 
 #endif
 
 struct game_memory { //We are gonna be taking the handmade hero route, to see how it goes and if it is something that I like when the thing gets complex
