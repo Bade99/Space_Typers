@@ -782,6 +782,8 @@ void  make_wall_mask(img* mask, f32 corner_radius) {
 }
 
 void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, game_input* input) {
+    RESET_TIMED_BLOCKS;
+    START_TIMED_BLOCK(game_update_and_render);
 
     //BIG TODO(fran): game_add_entity can no longer copy the game_entity, that would mean it uses the collision areas stored in the saved entity (it's fine for now, until we need to apply some transformation to collision areas)
     
@@ -1100,6 +1102,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 
     //NOTE: now when we go to render we have to transform from meters, the unit everything in our game is, to pixels, the unit of the screen
     
+#if 0
+
 #if 1
     v2 origin = v2{ 500.f,500.f } + 100.f * v2{ sinf(gs->time) ,cos(gs->time) };
 #else
@@ -1128,6 +1132,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
     push_coord_system(rg, { 200,600 }, 3*v2{ (f32)ts->TEST_top_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_top_env_map.LOD[0].height / 6 }, color, &ts->TEST_top_env_map.LOD[0], 0, 0,0);
     push_coord_system(rg, { 200,400 }, 3*v2{ (f32)ts->TEST_bottom_env_map.LOD[0].width/6,0 }, 3*v2{ 0,(f32)ts->TEST_bottom_env_map.LOD[0].height / 6 }, color, &ts->TEST_bottom_env_map.LOD[0], 0, 0,0);
 
+#endif
+
     //Camera bounds test
     rc2 screen_bounds = get_camera_rc_at_target(rg); //TODO(fran): re-check this (handmade 110) it's ok with no scaling but if i scroll it goes wrong, or maybe what happens is right, but I dont think so
     push_rect_boundary(rg, rg->camera - screen_bounds.radius, { screen_bounds.get_dim().x ,0 }, { 0,screen_bounds.get_dim().y }, 1, { 1.f,0.f,1.f,1.f });
@@ -1143,7 +1149,42 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         }
     }
 
+    END_TIMED_BLOCK(game_update_and_render);
+
+    handle_global_cycle_counter();
 }
+
+/*NOTE:
+    Latency: how long it takes for an instruction from being issued to being complete (important for short sets of data)
+    Throughput: how many of them can I do when the pipeline is full (important for large sets of data)
+    Drainout: flushing the pipeline at the end
+    Basics of Optimization: make sure the memory doesnt stall you and make sure you make the least amount of work on it as possible
+    (handmade 113)
+        -1st step: measure, find out where the big bottlenecks are, never optimize something until you know it needs to be
+            (NOTE: remember to count cycles, I wouldnt have thought of that cause I didnt think it was reliable enough but it's very useful)
+        -2nd step: count your operations reduced to their basic form (eg n additions, n dots, n lengths, ...)
+        -3rd step: with the data from 1 and 2 make an estimate of the amount you think you should be able to cut down
+        -4th step: prepare your function for optimization, aka remove all "zero cost abstractions"
+        -5th step: "wide strategy" aka how are you gonna operate wide on the things you have, are they all the same and easily packed?, in the case of rendering, do you want to have a pixel in each lane? wanna have Rs in one lane, Gs in another and so on? usually alpha is treated different from rgb so you probably dont want a lane to be the full pixel
+    Efficiency: the algorithm, doing the least work you can
+    Overdraw: how many times do you write the same pixel -> Renderer Efficiency
+    AOS vs SOA:
+     -AOS: array of structures (what C does, not great for SIMD): struct color{ f32 r,g,b,a;}
+        -SIMD register would want rrrr but we have rgba
+     -SOA: structure of arrays (good for doing same operations on same sorts of things) rrrr gggg bbbb aaaa
+        -struct colors{
+            f32* r; //you have one structure that has a bunch of arrays in it
+            f32* g; //points to sequence of Gs, perfect for SIMD
+            f32* b;
+            f32* a;
+         }
+         //This is important cause intel didnt provide a way to load the data by strides (in SSE, in AVX they added some instructions which seem very costly from what I read, gotta test), eg saying load every fourth byte, NEON does have this instructions but intel was lazy I guess, too hard
+    Intel intrinsics guide: https://software.intel.com/sites/landingpage/IntrinsicsGuide/
+*/
+
+//TODO(fran): read the intel arquitecture manual
+
+//NOTE: handmade 112 51:00 quick and simple explanation of hyperthreading
 
 //TODO(fran): it would be nice to be free of visual studio, so we can do things like live code editing easier, and also simpler for porting
 
@@ -1154,9 +1195,14 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 //INFO: handmade day 61, min ~30 "hit table" to differentiate between new collisions and ones that were already overlapping that same object
 //INFO: day 62 introduces an interesting concept of "move spec" which abstracts movement a bit, and adds options for different types
 
+//TODO(fran): For learning about floating point:
+//              -reading: "What every computer scientist should know about floating point arithmetic" (pdf)
+//                        "Real computing made real" by Forman Acton
+//                        "Numerical methods that work" by Forman Acton
 
+//NOTE: Steam Hardware Survey, good base point for seeing what you are targeting on pc (2020 AVX 93%, AVX2 only 76% )
 
-
+//NOTE: there are performance counters for seeing cache misses on different cache levels
 
 
 

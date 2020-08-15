@@ -263,8 +263,11 @@ v3 sample_environment_map(environment_map* env_map, v2 screen_space_uv, v3 sampl
 	return res;
 }
 
+//NOTE(fran): takes about 280 cycles per pixel (including normal_map which is mostly unused)
 //TODO(fran): Im pretty sure I have a bug with alpha premult or gamma correction
+//TODO(fran): our challenge will be using AVX instead of SSE2
 void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*tint*/, img* texture, img* normal_map, environment_map* top_env_map, environment_map* bottom_env_map, f32 pixels_to_meters) {
+	START_TIMED_BLOCK(game_render_rectangle);//TODO(fran): timer addition
 	//NOTE: handmade day 90 to 92
 	color.rgb *= color.a; //premultiplication for the color up front
 
@@ -336,6 +339,7 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 	for (int y = y_min; y < y_max; y++) {
 		u32* pixel = (u32*)row;
 		for (int x = x_min; x < x_max; x++) {
+			START_TIMED_BLOCK(test_pixel);
 			//AARRGGBB
 			//NOTE: normals come out of the shape
 
@@ -353,6 +357,8 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 			f32 u = dot(d, x_axis) * inv_x_axis_length_sq; //Texture mapping, handmade day 93 18:00
 			f32 v = dot(d, y_axis) * inv_y_axis_length_sq;
 			if (u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f) { //NOTE REMEMBER: u v gives you pixel filtering for free, no need to check against the edges of the rectangle explicitly
+				START_TIMED_BLOCK(fill_pixel);
+				
 				f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
 				f32 t_y = v * (f32)(texture->height - 2);
 
@@ -496,12 +502,435 @@ void game_render_rectangle(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color/*
 
 				*pixel = round_f32_to_i32(blended255.a) << 24 | round_f32_to_i32(blended255.r) << 16 | round_f32_to_i32(blended255.g) << 8 | round_f32_to_i32(blended255.b) << 0; //TODO(fran): should use round_f32_to_u32?
 
+				END_TIMED_BLOCK(fill_pixel);
 			}
 			pixel++;
+			
+			END_TIMED_BLOCK(test_pixel);
 		}
 		row += buf->pitch;
 	}
+
+	END_TIMED_BLOCK(game_render_rectangle);
 }
+
+//NOTE: pre anything (but with O2): ~260 cycles per pixel (game_render_rectangle without all the normal map stuff)
+//REMEMBER: amazingly enough the program got faster with each "abstraction" removal, no vectorization and already it is at least 50 cycles faster, so yeah Zero Cost Abstractions DONT Exist (at least as of 2020 with the stupid microsoft compiler, test llvm)
+	//NOTE: it seems the compiler isnt able to do the precomputations casey understood could be done
+#if 0
+void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture, f32 pixels_to_meters) {
+	START_TIMED_BLOCK(game_render_rectangle_fast);//TODO(fran): timer addition
+	color.rgb *= color.a; //premultiplication for the color up front
+
+	f32 inv_x_axis_length_sq = 1.f / length_sq(x_axis);
+	f32 inv_y_axis_length_sq = 1.f / length_sq(y_axis);
+
+	v2 n_x_axis = x_axis * inv_x_axis_length_sq;
+	v2 n_y_axis = y_axis * inv_y_axis_length_sq;
+
+	f32 x_axis_lenght = length(x_axis);
+	f32 y_axis_lenght = length(y_axis);
+
+	i32 width_max = buf->width - 1;
+	i32 height_max = buf->height - 1;
+
+	f32 inv_width_max = 1.f / (f32)width_max;
+	f32 inv_height_max = 1.f / (f32)height_max;
+
+	f32 inv255 = 1.f / 255.f;
+
+	f32 one_255 = 255.f;
+
+	i32 x_min = buf->width;
+	i32 x_max = 0;
+	i32 y_min = buf->height;
+	i32 y_max = 0;
+
+	v2 points[4] = { origin,origin + x_axis,origin + y_axis,origin + x_axis + y_axis };
+	for (v2 p : points) {
+		i32 floorx = (i32)floorf(p.x);
+		i32 ceilx = (i32)ceilf(p.x);
+		i32 floory = (i32)floorf(p.y);
+		i32 ceily = (i32)ceilf(p.y);
+
+		if (x_min > floorx)x_min = floorx;
+		if (y_min > floory)y_min = floory;
+		if (x_max < ceilx)x_max = ceilx;
+		if (y_max < ceily)y_max = ceily;
+	}
+
+	if (x_min < 0)x_min = 0;
+	if (y_min < 0)y_min = 0;
+	if (x_max > buf->width)x_max = buf->width;
+	if (y_max > buf->height)y_max = buf->height;
+
+	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
+
+	for (int y = y_min; y < y_max; y++) {
+		u32* pixel = (u32*)row;
+		for (int x = x_min; x < x_max; x++) {
+			START_TIMED_BLOCK(test_pixel);
+
+			v2 p = { (f32)x, (f32)y };
+			v2 d = p - origin;
+			f32 u = dot(d, n_x_axis); //Texture mapping, handmade day 93 18:00
+			f32 v = dot(d, n_y_axis);
+			if (u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f) {
+				START_TIMED_BLOCK(fill_pixel);
+
+				f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
+				f32 t_y = v * (f32)(texture->height - 2);
+
+				i32 i_x = (i32)t_x;
+				i32 i_y = (i32)t_y;
+
+				f32 f_x = t_x - (f32)i_x;
+				f32 f_y = t_y - (f32)i_y;
+
+				game_assert(i_x >= 0 && i_x < texture->width);
+				game_assert(i_y >= 0 && i_y < texture->height);
+
+				//sample_bilinear
+				u8* texel_ptr = ((u8*)texture->mem + i_y * texture->pitch + i_x * IMG_BYTES_PER_PIXEL);
+				u32 packed_A = *(u32*)texel_ptr;
+				u32 packed_B = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
+				u32 packed_C = *(u32*)(texel_ptr + texture->pitch);
+				u32 packed_D = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
+
+				//unpack_4x8 for 4 samples
+				f32 unpacked_A_r = (f32)((packed_A >> 16) & 0xFF);
+				f32 unpacked_A_g = (f32)((packed_A >> 8) & 0xFF);
+				f32 unpacked_A_b = (f32)((packed_A >> 0) & 0xFF);
+				f32 unpacked_A_a = (f32)((packed_A >> 24) & 0xFF);
+
+				f32 unpacked_B_r = (f32)((packed_B >> 16) & 0xFF);
+				f32 unpacked_B_g = (f32)((packed_B >> 8) & 0xFF);
+				f32 unpacked_B_b = (f32)((packed_B >> 0) & 0xFF);
+				f32 unpacked_B_a = (f32)((packed_B >> 24) & 0xFF);
+
+				f32 unpacked_C_r = (f32)((packed_C >> 16) & 0xFF);
+				f32 unpacked_C_g = (f32)((packed_C >> 8) & 0xFF);
+				f32 unpacked_C_b = (f32)((packed_C >> 0) & 0xFF);
+				f32 unpacked_C_a = (f32)((packed_C >> 24) & 0xFF);
+
+				f32 unpacked_D_r = (f32)((packed_D >> 16) & 0xFF);
+				f32 unpacked_D_g = (f32)((packed_D >> 8) & 0xFF);
+				f32 unpacked_D_b = (f32)((packed_D >> 0) & 0xFF);
+				f32 unpacked_D_a = (f32)((packed_D >> 24) & 0xFF);
+
+				//srgb255_to_linear1 for 4 samples
+				unpacked_A_r = squared(unpacked_A_r * inv255);
+				unpacked_A_g = squared(unpacked_A_g * inv255);
+				unpacked_A_b = squared(unpacked_A_b * inv255);
+				unpacked_A_a = unpacked_A_a * inv255;
+
+				unpacked_B_r = squared(unpacked_B_r * inv255);
+				unpacked_B_g = squared(unpacked_B_g * inv255);
+				unpacked_B_b = squared(unpacked_B_b * inv255);
+				unpacked_B_a = unpacked_B_a * inv255;
+
+				unpacked_C_r = squared(unpacked_C_r * inv255);
+				unpacked_C_g = squared(unpacked_C_g * inv255);
+				unpacked_C_b = squared(unpacked_C_b * inv255);
+				unpacked_C_a = unpacked_C_a * inv255;
+
+				unpacked_D_r = squared(unpacked_D_r * inv255);
+				unpacked_D_g = squared(unpacked_D_g * inv255);
+				unpacked_D_b = squared(unpacked_D_b * inv255);
+				unpacked_D_a = unpacked_D_a * inv255;
+
+				//lerp(lerp(),lerp())
+				f32 f_x_rem = 1.f - f_x;
+				f32 f_y_rem = 1.f - f_y;
+				f32 l0 = f_y_rem * f_x_rem;
+				f32 l1 = f_y_rem * f_x;
+				f32 l2 = f_y * f_x_rem;
+				f32 l3 = f_y * f_x;
+				f32 texel_r = l0 * unpacked_A_r + l1 * unpacked_B_r + l2 * unpacked_C_r + l3 * unpacked_D_r;
+				f32 texel_g = l0 * unpacked_A_g + l1 * unpacked_B_g + l2 * unpacked_C_g + l3 * unpacked_D_g;
+				f32 texel_b = l0 * unpacked_A_b + l1 * unpacked_B_b + l2 * unpacked_C_b + l3 * unpacked_D_b;
+				f32 texel_a = l0 * unpacked_A_a + l1 * unpacked_B_a + l2 * unpacked_C_a + l3 * unpacked_D_a;
+
+				//hadamard
+				texel_r = texel_r * color.r;
+				texel_g = texel_g * color.g;
+				texel_b = texel_b * color.b;
+				texel_a = texel_a * color.a;
+
+				texel_r = clamp01(texel_r);
+				texel_g = clamp01(texel_g);
+				texel_b = clamp01(texel_b);
+				texel_a = clamp01(texel_a);
+
+				//unpack_4x8
+				f32 dest_r = (f32)((*pixel >> 16) & 0xFF);
+				f32 dest_g = (f32)((*pixel >> 8) & 0xFF);
+				f32 dest_b = (f32)((*pixel >> 0) & 0xFF);
+				f32 dest_a = (f32)((*pixel >> 24) & 0xFF);
+
+				//srgb255_to_linear1
+				dest_r = squared(dest_r * inv255);
+				dest_g = squared(dest_g * inv255);
+				dest_b = squared(dest_b * inv255);
+				dest_a = dest_a * inv255;
+
+				//v4 blended = (1.f - texel.a) * dest + texel;
+				f32 texel_a_rem = (1.f - texel_a);
+				f32 blended_r = texel_a_rem * dest_r + texel_r;
+				f32 blended_g = texel_a_rem * dest_g + texel_g;
+				f32 blended_b = texel_a_rem * dest_b + texel_b;
+				f32 blended_a = texel_a_rem * dest_a + texel_a;
+
+				//linear1_to_srgb255
+				blended_r = square_root(blended_r) * one_255;
+				blended_g = square_root(blended_g) * one_255;
+				blended_b = square_root(blended_b) * one_255;
+				blended_a = blended_a * one_255;
+
+				//round_f32_to_u32 & write
+				*pixel = (u32)(blended_a+.5f) << 24 | (u32)(blended_r+.5f) << 16 | (u32)(blended_g+.5f) << 8 | (u32)(blended_b+.5f) << 0;
+
+				END_TIMED_BLOCK(fill_pixel);
+			}
+			pixel++;
+
+			END_TIMED_BLOCK(test_pixel);
+		}
+		row += buf->pitch;
+	}
+
+	END_TIMED_BLOCK(game_render_rectangle_fast);
+}
+#else
+#include <immintrin.h> //TODO(fran): check why there are other 5+ intrin headers
+//NOTE: we doin' AVX instead of SSE
+//NOTE: REMEMBER: visual studio died while I wrote this stuff, clearly not its target user it'd seem, reeeeally slowed down
+void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 color, img* texture, f32 pixels_to_meters) {
+	START_TIMED_BLOCK(game_render_rectangle_fast);//TODO(fran): timer addition
+	
+	color.rgb *= color.a; //premultiplication for the color up front
+
+	f32 inv_x_axis_length_sq = 1.f / length_sq(x_axis);
+	f32 inv_y_axis_length_sq = 1.f / length_sq(y_axis);
+
+	v2 n_x_axis = x_axis * inv_x_axis_length_sq;
+	v2 n_y_axis = y_axis * inv_y_axis_length_sq;
+
+	f32 x_axis_lenght = length(x_axis);
+	f32 y_axis_lenght = length(y_axis);
+
+	i32 width_max = buf->width - 1     - 3; //TODO(fran): remove, quick hack for getting avx working and not writing to the other side of the screen
+	i32 height_max = buf->height - 1   - 3;
+
+	f32 inv255 = 1.f / 255.f;
+
+	f32 one_255 = 255.f;
+
+	i32 x_min = width_max;
+	i32 x_max = 0;
+	i32 y_min = height_max;
+	i32 y_max = 0;
+
+	v2 points[4] = { origin,origin + x_axis,origin + y_axis,origin + x_axis + y_axis };
+	for (v2 p : points) {
+		i32 floorx = (i32)floorf(p.x);
+		i32 ceilx = (i32)ceilf(p.x);
+		i32 floory = (i32)floorf(p.y);
+		i32 ceily = (i32)ceilf(p.y);
+
+		if (x_min > floorx)x_min = floorx;
+		if (y_min > floory)y_min = floory;
+		if (x_max < ceilx)x_max = ceilx;
+		if (y_max < ceily)y_max = ceily;
+	}
+
+	if (x_min < 0)x_min = 0;
+	if (y_min < 0)y_min = 0;
+	if (x_max > width_max)x_max = width_max;
+	if (y_max > height_max)y_max = height_max;
+
+	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
+
+	for (int y = y_min; y <= y_max; y++) {
+		u32* pixel = (u32*)row;
+		for (int x_it = x_min; x_it <= x_max; x_it += 8) {
+			START_TIMED_BLOCK(test_pixel);
+
+			f32 unpacked_A_r[8];
+			f32 unpacked_A_g[8];
+			f32 unpacked_A_b[8];
+			f32 unpacked_A_a[8];
+				
+			f32 unpacked_B_r[8];
+			f32 unpacked_B_g[8];
+			f32 unpacked_B_b[8];
+			f32 unpacked_B_a[8];
+				
+			f32 unpacked_C_r[8];
+			f32 unpacked_C_g[8];
+			f32 unpacked_C_b[8];
+			f32 unpacked_C_a[8];
+				
+			f32 unpacked_D_r[8];
+			f32 unpacked_D_g[8];
+			f32 unpacked_D_b[8];
+			f32 unpacked_D_a[8];
+
+			bool should_fill[8];
+
+			f32 dest_r[8];
+			f32 dest_g[8];
+			f32 dest_b[8];
+			f32 dest_a[8];
+
+			f32 f_x[8];
+			f32 f_y[8];
+
+			for (i32 p_idx = 0; p_idx < 8; p_idx++) {//NOTE:REMEMBER: now I understand why he said you waste some part of the lane on the right border, you're still gonna be clipping by uv and just moving in x for the lanes
+				v2 p = { (f32)(x_it + p_idx), (f32)y };
+				v2 d = p - origin;
+				f32 u = dot(d, n_x_axis); //Texture mapping, handmade day 93 18:00
+				f32 v = dot(d, n_y_axis);
+
+				should_fill[p_idx] = u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f;
+				if (should_fill[p_idx]) {
+					//START_TIMED_BLOCK(fill_pixel);
+
+					f32 t_x = u * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
+					f32 t_y = v * (f32)(texture->height - 2);
+
+					i32 i_x = (i32)t_x;
+					i32 i_y = (i32)t_y;
+
+					f_x[p_idx] = t_x - (f32)i_x;
+					f_y[p_idx] = t_y - (f32)i_y;
+
+					game_assert(i_x >= 0 && i_x < texture->width);
+					game_assert(i_y >= 0 && i_y < texture->height);
+
+					//sample_bilinear
+					u8* texel_ptr = ((u8*)texture->mem + i_y * texture->pitch + i_x * IMG_BYTES_PER_PIXEL);
+					u32 packed_A = *(u32*)texel_ptr;
+					u32 packed_B = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
+					u32 packed_C = *(u32*)(texel_ptr + texture->pitch);
+					u32 packed_D = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
+
+					//unpack_4x8 for 4 samples
+					unpacked_A_r[p_idx] = (f32)((packed_A >> 16) & 0xFF);
+					unpacked_A_g[p_idx] = (f32)((packed_A >> 8) & 0xFF);
+					unpacked_A_b[p_idx] = (f32)((packed_A >> 0) & 0xFF);
+					unpacked_A_a[p_idx] = (f32)((packed_A >> 24) & 0xFF);
+								 
+					unpacked_B_r[p_idx] = (f32)((packed_B >> 16) & 0xFF);
+					unpacked_B_g[p_idx] = (f32)((packed_B >> 8) & 0xFF);
+					unpacked_B_b[p_idx] = (f32)((packed_B >> 0) & 0xFF);
+					unpacked_B_a[p_idx] = (f32)((packed_B >> 24) & 0xFF);
+								 
+					unpacked_C_r[p_idx] = (f32)((packed_C >> 16) & 0xFF);
+					unpacked_C_g[p_idx] = (f32)((packed_C >> 8) & 0xFF);
+					unpacked_C_b[p_idx] = (f32)((packed_C >> 0) & 0xFF);
+					unpacked_C_a[p_idx] = (f32)((packed_C >> 24) & 0xFF);
+								 
+					unpacked_D_r[p_idx] = (f32)((packed_D >> 16) & 0xFF);
+					unpacked_D_g[p_idx] = (f32)((packed_D >> 8) & 0xFF);
+					unpacked_D_b[p_idx] = (f32)((packed_D >> 0) & 0xFF);
+					unpacked_D_a[p_idx] = (f32)((packed_D >> 24) & 0xFF);
+
+					//unpack_4x8
+					dest_r[p_idx] = (f32)((*(pixel+p_idx) >> 16) & 0xFF);
+					dest_g[p_idx] = (f32)((*(pixel+p_idx) >> 8) & 0xFF);
+					dest_b[p_idx] = (f32)((*(pixel+p_idx) >> 0) & 0xFF);
+					dest_a[p_idx] = (f32)((*(pixel+p_idx) >> 24) & 0xFF);
+				}
+			}
+
+			f32 blended_r[8];
+			f32 blended_g[8];
+			f32 blended_b[8];
+			f32 blended_a[8];
+
+			for (i32 p_idx = 0; p_idx < 8; p_idx++) {
+				//srgb255_to_linear1 for 4 samples
+				unpacked_A_r[p_idx] = squared(unpacked_A_r[p_idx] * inv255);
+				unpacked_A_g[p_idx] = squared(unpacked_A_g[p_idx] * inv255);
+				unpacked_A_b[p_idx] = squared(unpacked_A_b[p_idx] * inv255);
+				unpacked_A_a[p_idx] = unpacked_A_a[p_idx] * inv255;
+							
+				unpacked_B_r[p_idx] = squared(unpacked_B_r[p_idx] * inv255);
+				unpacked_B_g[p_idx] = squared(unpacked_B_g[p_idx] * inv255);
+				unpacked_B_b[p_idx] = squared(unpacked_B_b[p_idx] * inv255);
+				unpacked_B_a[p_idx] = unpacked_B_a[p_idx] * inv255;
+							
+				unpacked_C_r[p_idx] = squared(unpacked_C_r[p_idx] * inv255);
+				unpacked_C_g[p_idx] = squared(unpacked_C_g[p_idx] * inv255);
+				unpacked_C_b[p_idx] = squared(unpacked_C_b[p_idx] * inv255);
+				unpacked_C_a[p_idx] = unpacked_C_a[p_idx] * inv255;
+							
+				unpacked_D_r[p_idx] = squared(unpacked_D_r[p_idx] * inv255);
+				unpacked_D_g[p_idx] = squared(unpacked_D_g[p_idx] * inv255);
+				unpacked_D_b[p_idx] = squared(unpacked_D_b[p_idx] * inv255);
+				unpacked_D_a[p_idx] = unpacked_D_a[p_idx] * inv255;
+
+				//lerp(lerp(),lerp())
+				f32 f_x_rem = 1.f - f_x[p_idx];
+				f32 f_y_rem = 1.f - f_y[p_idx];
+				f32 l0 = f_y_rem * f_x_rem;
+				f32 l1 = f_y_rem * f_x[p_idx];
+				f32 l2 = f_y[p_idx] * f_x_rem;
+				f32 l3 = f_y[p_idx] * f_x[p_idx];
+				f32 texel_r = l0 * unpacked_A_r[p_idx] + l1 * unpacked_B_r[p_idx] + l2 * unpacked_C_r[p_idx] + l3 * unpacked_D_r[p_idx];
+				f32 texel_g = l0 * unpacked_A_g[p_idx] + l1 * unpacked_B_g[p_idx] + l2 * unpacked_C_g[p_idx] + l3 * unpacked_D_g[p_idx];
+				f32 texel_b = l0 * unpacked_A_b[p_idx] + l1 * unpacked_B_b[p_idx] + l2 * unpacked_C_b[p_idx] + l3 * unpacked_D_b[p_idx];
+				f32 texel_a = l0 * unpacked_A_a[p_idx] + l1 * unpacked_B_a[p_idx] + l2 * unpacked_C_a[p_idx] + l3 * unpacked_D_a[p_idx];
+
+				//hadamard
+				texel_r = texel_r * color.r;
+				texel_g = texel_g * color.g;
+				texel_b = texel_b * color.b;
+				texel_a = texel_a * color.a;
+
+				texel_r = clamp01(texel_r);
+				texel_g = clamp01(texel_g);
+				texel_b = clamp01(texel_b);
+				texel_a = clamp01(texel_a);
+
+				//srgb255_to_linear1
+				dest_r[p_idx] = squared(dest_r[p_idx] * inv255);
+				dest_g[p_idx] = squared(dest_g[p_idx] * inv255);
+				dest_b[p_idx] = squared(dest_b[p_idx] * inv255);
+				dest_a[p_idx] = dest_a[p_idx] * inv255;
+
+				//v4 blended = (1.f - texel.a) * dest + texel;
+				f32 texel_a_rem = (1.f - texel_a);
+				blended_r[p_idx] = texel_a_rem * dest_r[p_idx] + texel_r;
+				blended_g[p_idx] = texel_a_rem * dest_g[p_idx] + texel_g;
+				blended_b[p_idx] = texel_a_rem * dest_b[p_idx] + texel_b;
+				blended_a[p_idx] = texel_a_rem * dest_a[p_idx] + texel_a;
+
+				//linear1_to_srgb255
+				blended_r[p_idx] = square_root(blended_r[p_idx]) * one_255;
+				blended_g[p_idx] = square_root(blended_g[p_idx]) * one_255;
+				blended_b[p_idx] = square_root(blended_b[p_idx]) * one_255;
+				blended_a[p_idx] = blended_a[p_idx] * one_255;
+			}
+
+			for (i32 p_idx = 0; p_idx < 8; p_idx++) {
+				//round_f32_to_u32 & write
+				if(should_fill[p_idx])
+					*(pixel+p_idx) = (u32)(blended_a[p_idx] + .5f) << 24 | (u32)(blended_r[p_idx] + .5f) << 16 | (u32)(blended_g[p_idx] + .5f) << 8 | (u32)(blended_b[p_idx] + .5f) << 0;
+
+			}
+					//END_TIMED_BLOCK(fill_pixel);
+			pixel+=8;
+			END_TIMED_BLOCK(test_pixel);
+		}
+
+		row += buf->pitch;
+	}
+
+	END_TIMED_BLOCK(game_render_rectangle_fast);
+}
+#endif
 
 //TODO(fran): Im pretty sure I have a bug with alpha premult or gamma correction
 void game_render_tileable(img* buf, v2 origin, v2 x_axis, v2 y_axis, img* mask, img* tile, v2 tile_offset_percent, v2 tile_size_px) {
@@ -746,6 +1175,8 @@ f32 get_layer_scaling(layer_info* nfo, u32 idx) {
 
 void output_render_group(render_group* rg, img* output_target) {
 
+	START_TIMED_BLOCK(output_render_group);
+
 	v2 screen_dim = v2_from_i32( output_target->width,output_target->height );
 	v2 screen_center = screen_dim*.5f;
 
@@ -813,7 +1244,11 @@ void output_render_group(render_group* rg, img* output_target) {
 			game_assert(entry->image);
 			origin -= (entry->image->alignment_percent.x*x_axis + entry->image->alignment_percent.y * y_axis);
 #endif
+#if 0
 			game_render_rectangle(output_target, origin, x_axis, y_axis, {1,1,1,1}, entry->image, 0, 0, 0, pixels_to_meters);
+#else 
+			game_render_rectangle_fast(output_target, origin, x_axis, y_axis, { 1,1,1,1 }, entry->image, pixels_to_meters);
+#endif
 		} break;
 		case RenderGroupEntryType_render_entry_coordinate_system:
 		{
@@ -866,5 +1301,7 @@ void output_render_group(render_group* rg, img* output_target) {
 		}
 
 	}
+
+	END_TIMED_BLOCK(output_render_group);
 }
 //TODO(fran): Im having to convert to origin at the bottom left corner each time I push one of these, not pretty

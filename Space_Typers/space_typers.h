@@ -27,19 +27,6 @@
 
 #define push_sz(arena,sz) _push_mem(arena,sz)
 
-#define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
-
-
-
-
-#define zero_struct(instance) zero_mem(&(instance),sizeof(instance))
-void zero_mem(void* ptr, u32 sz) {
-    //TODO(fran): performance
-    u8* bytes = (u8*)ptr;
-    while (sz--)
-        *bytes++ = 0;
-}
-
 #define IMG_BYTES_PER_PIXEL 4 //NOTE: there's one byte for each channel
 #define IMG_CHANNELS 4 //NOTE: all images are loaded and stored in rgba (maybe not that order)
 struct img {

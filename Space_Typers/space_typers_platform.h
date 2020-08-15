@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint> //uint8_t
 
+//NOTE: Indicates whether the build is developer only, in which case all sorts of garbage, testing, counters, etc etc are allowed
+#define _DEVELOPER
 
 typedef uint8_t u8; //prepping for jai //TODO(fran): move to space_typers_base_types.h? or something like that
 typedef uint16_t u16;
@@ -24,7 +26,64 @@ typedef char32_t utf32;//TODO(fran): use utf32?
 #define Gigabytes(n) (Megabytes(n)*1024LL)
 #define Terabytes(n) (Gigabytes(n)*1024LL)
 
+//TODO(fran): this and the debug_cycle_counter stuff should go in space_typers.h if we arent going to pass this info to the platform layer
+#define arr_count(arr) sizeof(arr)/sizeof((arr)[0])
+
+#define zero_struct(instance) zero_mem(&(instance),sizeof(instance))
+void zero_mem(void* ptr, u32 sz) {
+    //TODO(fran): performance
+    u8* bytes = (u8*)ptr;
+    while (sz--)
+        *bytes++ = 0;
+}
+
 #include "space_typers_vector.h" //TODO(fran): it's ugly to just have this guy here for v3_i32 in the controller, and we also have to put it after the typedefs
+
+#ifdef _DEVELOPER
+
+struct debug_cycle_counter {
+    u64 cycles_elapsed;
+    u32 hit_count;
+    char name[32];
+};
+
+enum
+{
+    /* 0 */ debug_cycle_counter_game_update_and_render,
+    /* 1 */ debug_cycle_counter_output_render_group,
+    /* 2 */ debug_cycle_counter_game_render_rectangle,
+    /* 3 */ debug_cycle_counter_test_pixel,
+    /* 4 */ debug_cycle_counter_fill_pixel,
+    /* 5 */ debug_cycle_counter_game_render_rectangle_fast,
+
+    /* n+1 */ debug_cycle_counter_COUNT,
+};
+
+debug_cycle_counter global_cycle_counter[debug_cycle_counter_COUNT];
+
+void handle_global_cycle_counter() {
+    printf("CYCLE COUNTS:\n");
+    for (u32 i = 0; i < arr_count(global_cycle_counter); i++)
+    //for (i32 i = arr_count(global_cycle_counter)-1; i >= 0 ; i--)
+        if(global_cycle_counter[i].hit_count)
+        printf("[%32s]: %llu cycles | %u hits | %llu cy/ht\n", global_cycle_counter[i].name, global_cycle_counter[i].cycles_elapsed, global_cycle_counter[i].hit_count, global_cycle_counter[i].cycles_elapsed / (u64)global_cycle_counter[i].hit_count);
+    //TODO(fran): maybe do the reset here
+}
+
+#if _MSC_VER
+#define RESET_TIMED_BLOCKS zero_struct(global_cycle_counter);
+#define START_TIMED_BLOCK(id) u64 cycle_start##id = __rdtsc();
+#define END_TIMED_BLOCK(id) global_cycle_counter[debug_cycle_counter_##id] = { global_cycle_counter[debug_cycle_counter_##id].cycles_elapsed + __rdtsc() - cycle_start##id,global_cycle_counter[debug_cycle_counter_##id].hit_count+1,#id};
+#else
+
+#endif
+
+#else
+void handle_global_cycle_counter(){}
+#define RESET_TIMED_BLOCKS 
+#define START_TIMED_BLOCK(id) 
+#define END_TIMED_BLOCK(id) 
+#endif
 
 struct game_memory { //We are gonna be taking the handmade hero route, to see how it goes and if it is something that I like when the thing gets complex
     u32 permanent_storage_sz;

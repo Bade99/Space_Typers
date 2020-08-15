@@ -2,8 +2,6 @@
 //
 #define _CRT_SECURE_NO_WARNINGS //freopen
 
-#define _DEVELOPER
-
 #include <SDKDDKVer.h> // defines highest available Windows platform, to build for a previous one set the _WIN32_WINNT macro to the platform you want and then inlcude
 #define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
 #include "resource.h"
