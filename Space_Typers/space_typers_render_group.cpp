@@ -756,48 +756,17 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 	__m256 color_b = _mm256_set1_ps(color.b);
 	__m256 color_a = _mm256_set1_ps(color.a);
 
+	__m256 max_width_tex_lookup = _mm256_set1_ps((f32)(texture->width - 2)); //TODO(fran): avoid reading below and to the right of the buffer in a better way
+	__m256 max_height_tex_lookup = _mm256_set1_ps((f32)(texture->height - 2));
+
+	__m256i mask_FF = _mm256_set1_epi32(0xFF);
+
 	u8* row = (u8*)buf->mem + x_min * IMG_BYTES_PER_PIXEL + y_min * buf->pitch;
 
 	START_TIMED_BLOCK(process_pixel);
 	for (int y = y_min; y <= y_max; y++) {
 		u32* pixel = (u32*)row;
 		for (int x_it = x_min; x_it <= x_max; x_it += 8) {
-
-			__m256 texel_A_r = _mm256_set1_ps(.0f);
-			__m256 texel_A_g = _mm256_set1_ps(.0f);
-			__m256 texel_A_b = _mm256_set1_ps(.0f);
-			__m256 texel_A_a = _mm256_set1_ps(.0f);
-							 
-			__m256 texel_B_r = _mm256_set1_ps(.0f);
-			__m256 texel_B_g = _mm256_set1_ps(.0f);
-			__m256 texel_B_b = _mm256_set1_ps(.0f);
-			__m256 texel_B_a = _mm256_set1_ps(.0f);
-							 
-			__m256 texel_C_r = _mm256_set1_ps(.0f);
-			__m256 texel_C_g = _mm256_set1_ps(.0f);
-			__m256 texel_C_b = _mm256_set1_ps(.0f);
-			__m256 texel_C_a = _mm256_set1_ps(.0f);
-							 
-			__m256 texel_D_r = _mm256_set1_ps(.0f);
-			__m256 texel_D_g = _mm256_set1_ps(.0f);
-			__m256 texel_D_b = _mm256_set1_ps(.0f);
-			__m256 texel_D_a = _mm256_set1_ps(.0f);
-
-			bool should_fill[8];
-
-			__m256 dest_r = _mm256_set1_ps(.0f);
-			__m256 dest_g = _mm256_set1_ps(.0f);
-			__m256 dest_b = _mm256_set1_ps(.0f);
-			__m256 dest_a = _mm256_set1_ps(.0f);
-
-			__m256 f_x = _mm256_set1_ps(.0f);
-			__m256 f_y = _mm256_set1_ps(.0f);
-
-			__m256 blended_r;
-			__m256 blended_g;
-			__m256 blended_b;
-			__m256 blended_a;
-
 			//NOTE: REMEMBER: (still inside the for loop from 0 to 8) somehow just reducing this 3 (from p_x to u) to their basic form, without doing any SIMD, removed almost 30 cycles, wtf? yet again Zero Cost Abstractions do NOT exist (2020 msvc)
 			__m256 p_x = _mm256_set_ps( (f32)(x_it + 7), (f32)(x_it + 6), (f32)(x_it + 5), (f32)(x_it + 4), (f32)(x_it + 3), (f32)(x_it + 2), (f32)(x_it + 1), (f32)(x_it + 0));
 			__m256 p_y = _mm256_set1_ps((f32)y);
@@ -808,135 +777,203 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 			__m256 u = _mm256_add_ps(_mm256_mul_ps(d_x, n_x_axis_x), _mm256_mul_ps(d_y, n_x_axis_y));
 			__m256 v = _mm256_add_ps(_mm256_mul_ps(d_x, n_y_axis_x), _mm256_mul_ps(d_y, n_y_axis_y));
 
-			for (i32 p_idx = 0; p_idx < 8; p_idx++){
+			__m256i original_dest = _mm256_loadu_si256((__m256i*)pixel);
+			//NOTE: this page https://www.felixcloutier.com/x86/cmppd says some subset of the processors with avx do not implement "greather than or equal", since we wont ship this we dont care, but interesting notice
 
-				should_fill[p_idx] = u.m256_f32[p_idx] >= 0.f && u.m256_f32[p_idx] <= 1.f && v.m256_f32[p_idx] >= 0.f && v.m256_f32[p_idx] <= 1.f;
-				if (should_fill[p_idx]) {
-					//START_TIMED_BLOCK(fill_pixel);
+			//Decide which pixels will get written to the buffer
+			__m256i write_mask = _mm256_castps_si256(_mm256_and_ps(
+														_mm256_and_ps(_mm256_cmp_ps(u, zero, _CMP_GE_OQ), _mm256_cmp_ps(u, one, _CMP_LE_OQ)),
+														_mm256_and_ps(_mm256_cmp_ps(v, zero, _CMP_GE_OQ), _mm256_cmp_ps(v, one, _CMP_LE_OQ))));
 
-					f32 t_x = u.m256_f32[p_idx] * (f32)(texture->width - 2); //TODO(fran): avoid reading below and to the right of the buffer in a better way
-					f32 t_y = v.m256_f32[p_idx] * (f32)(texture->height - 2);
+			//NOTE: the point of movemask, allows you to basically reduce the 256 bits into 32 which tell you if anything (msb but for masks it's anything) is set in terms of each byte
+			//	in this case it allows us to know if any of the 8 pixels should be drawn, probably very useful for rotated imgs, for non rotated cycles do not increase more than a few
+			//if (_mm256_movemask_epi8(write_mask)) {
+				//clamp uv so we can remove the uv if check, we'll do more operations but no conditionals
+				u = _mm256_min_ps(_mm256_max_ps(u, zero), one);
+				v = _mm256_min_ps(_mm256_max_ps(v, zero), one);
 
-					i32 i_x = (i32)t_x;
-					i32 i_y = (i32)t_y;
+				__m256 t_x = _mm256_mul_ps(u, max_width_tex_lookup);
+				__m256 t_y = _mm256_mul_ps(v, max_height_tex_lookup);
 
-					f_x.m256_f32[p_idx] = t_x - (f32)i_x;
-					f_y.m256_f32[p_idx] = t_y - (f32)i_y;
+				__m256i i_x = _mm256_cvttps_epi32(t_x);
+				__m256i i_y = _mm256_cvttps_epi32(t_y);
 
-					game_assert(i_x >= 0 && i_x < texture->width);
-					game_assert(i_y >= 0 && i_y < texture->height);
+				__m256 f_x = _mm256_sub_ps(t_x, _mm256_cvtepi32_ps(i_x));
+				__m256 f_y = _mm256_sub_ps(t_y, _mm256_cvtepi32_ps(i_y));
+
+				__m256i packed_A;
+				__m256i packed_B;
+				__m256i packed_C;
+				__m256i packed_D;
+
+				for (i32 p_idx = 0; p_idx < 8; p_idx++) {
+					//game_assert(i_x.m256i_i32[p_idx] >= 0 && i_x.m256i_i32[p_idx] < texture->width);
+					//game_assert(i_y.m256i_i32[p_idx] >= 0 && i_y.m256i_i32[p_idx] < texture->height);
+
+					//TODO(fran): AVX2 has "gather" intrinsics which is what I think we need to make this into SIMD
 
 					//sample_bilinear
-					u8* texel_ptr = ((u8*)texture->mem + i_y * texture->pitch + i_x * IMG_BYTES_PER_PIXEL);
-					u32 packed_A = *(u32*)texel_ptr;
-					u32 packed_B = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
-					u32 packed_C = *(u32*)(texel_ptr + texture->pitch);
-					u32 packed_D = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
+					u8* texel_ptr = ((u8*)texture->mem + i_y.m256i_i32[p_idx] * texture->pitch + i_x.m256i_i32[p_idx] * IMG_BYTES_PER_PIXEL);
+					packed_A.m256i_u32[p_idx] = *(u32*)texel_ptr;
+					packed_B.m256i_u32[p_idx] = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
+					packed_C.m256i_u32[p_idx] = *(u32*)(texel_ptr + texture->pitch);
+					packed_D.m256i_u32[p_idx] = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
 
-					//unpack_4x8 for 4 samples
-					texel_A_r.m256_f32[p_idx] = (f32)((packed_A >> 16) & 0xFF);
-					texel_A_g.m256_f32[p_idx] = (f32)((packed_A >> 8) & 0xFF);
-					texel_A_b.m256_f32[p_idx] = (f32)((packed_A >> 0) & 0xFF);
-					texel_A_a.m256_f32[p_idx] = (f32)((packed_A >> 24) & 0xFF);
-						 	 
-					texel_B_r.m256_f32[p_idx] = (f32)((packed_B >> 16) & 0xFF);
-					texel_B_g.m256_f32[p_idx] = (f32)((packed_B >> 8) & 0xFF);
-					texel_B_b.m256_f32[p_idx] = (f32)((packed_B >> 0) & 0xFF);
-					texel_B_a.m256_f32[p_idx] = (f32)((packed_B >> 24) & 0xFF);
-							 
-					texel_C_r.m256_f32[p_idx] = (f32)((packed_C >> 16) & 0xFF);
-					texel_C_g.m256_f32[p_idx] = (f32)((packed_C >> 8) & 0xFF);
-					texel_C_b.m256_f32[p_idx] = (f32)((packed_C >> 0) & 0xFF);
-					texel_C_a.m256_f32[p_idx] = (f32)((packed_C >> 24) & 0xFF);
-							 
-					texel_D_r.m256_f32[p_idx] = (f32)((packed_D >> 16) & 0xFF);
-					texel_D_g.m256_f32[p_idx] = (f32)((packed_D >> 8) & 0xFF);
-					texel_D_b.m256_f32[p_idx] = (f32)((packed_D >> 0) & 0xFF);
-					texel_D_a.m256_f32[p_idx] = (f32)((packed_D >> 24) & 0xFF);
-
-					//unpack_4x8
-					dest_r.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 16) & 0xFF);
-					dest_g.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 8) & 0xFF);
-					dest_b.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 0) & 0xFF);
-					dest_a.m256_f32[p_idx] = (f32)((*(pixel+p_idx) >> 24) & 0xFF);
 				}
-			}
-			
-			//TODO(fran): check that the compiler doesnt compute "a" twice //NOTE: in debug it DOES replicate the operations, the good part is the result is the same since each intermediate result is not stored in any of the operands but in a new variable, so it does do mul(mul,mul) instead of a=mul -> mul(a,a) but they give the same result. 
-			//	In release it think it does it right, TODO(fran): might be better to remove the macros and test?
+
+				//REMEMBER: just the fact of moving this out of the conditional uv check reduced another 10 cycles, more "straighforward" work equals faster some times
+				//				and moving dest out of the conditional also reduced cycles, at least 5
+				//unpack_4x8 for 4 samples
+				__m256 texel_A_r = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_A, 16), mask_FF));
+				__m256 texel_A_g = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_A, 8), mask_FF));
+				__m256 texel_A_b = _mm256_cvtepi32_ps(_mm256_and_si256(packed_A, mask_FF));
+				__m256 texel_A_a = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_A, 24), mask_FF));
+
+				__m256 texel_B_r = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_B, 16), mask_FF));
+				__m256 texel_B_g = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_B, 8), mask_FF));
+				__m256 texel_B_b = _mm256_cvtepi32_ps(_mm256_and_si256(packed_B, mask_FF));
+				__m256 texel_B_a = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_B, 24), mask_FF));
+
+				__m256 texel_C_r = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_C, 16), mask_FF));
+				__m256 texel_C_g = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_C, 8), mask_FF));
+				__m256 texel_C_b = _mm256_cvtepi32_ps(_mm256_and_si256(packed_C, mask_FF));
+				__m256 texel_C_a = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_C, 24), mask_FF));
+
+				__m256 texel_D_r = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_D, 16), mask_FF));
+				__m256 texel_D_g = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_D, 8), mask_FF));
+				__m256 texel_D_b = _mm256_cvtepi32_ps(_mm256_and_si256(packed_D, mask_FF));
+				__m256 texel_D_a = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(packed_D, 24), mask_FF));
+
+				//unpack_4x8
+				__m256 dest_r = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(original_dest, 16), mask_FF));
+				__m256 dest_g = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(original_dest, 8), mask_FF));
+				__m256 dest_b = _mm256_cvtepi32_ps(_mm256_and_si256(original_dest, mask_FF));
+				__m256 dest_a = _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32(original_dest, 24), mask_FF));
+
+				//TODO(fran): check that the compiler doesnt compute "a" twice //NOTE: in debug it DOES replicate the operations, the good part is the result is the same since each intermediate result is not stored in any of the operands but in a new variable, so it does do mul(mul,mul) instead of a=mul -> mul(a,a) but they give the same result. 
+				//	In release it think it does it right, TODO(fran): might be better to remove the macros and test?
 #define _mm256_square_ps(a) _mm256_mul_ps(a,a)
 
 			//srgb255_to_linear1 for 4 samples
-			texel_A_r = _mm256_square_ps(_mm256_mul_ps( texel_A_r, inv255));
-			texel_A_g = _mm256_square_ps(_mm256_mul_ps( texel_A_g, inv255));
-			texel_A_b = _mm256_square_ps(_mm256_mul_ps( texel_A_b, inv255));
-			texel_A_a = _mm256_mul_ps(texel_A_a, inv255);
+				texel_A_r = _mm256_square_ps(_mm256_mul_ps(texel_A_r, inv255));
+				texel_A_g = _mm256_square_ps(_mm256_mul_ps(texel_A_g, inv255));
+				texel_A_b = _mm256_square_ps(_mm256_mul_ps(texel_A_b, inv255));
+				texel_A_a = _mm256_mul_ps(texel_A_a, inv255);
 
-			texel_B_r = _mm256_square_ps(_mm256_mul_ps(texel_B_r, inv255));
-			texel_B_g = _mm256_square_ps(_mm256_mul_ps(texel_B_g, inv255));
-			texel_B_b = _mm256_square_ps(_mm256_mul_ps(texel_B_b, inv255));
-			texel_B_a = _mm256_mul_ps(texel_B_a, inv255);
+				texel_B_r = _mm256_square_ps(_mm256_mul_ps(texel_B_r, inv255));
+				texel_B_g = _mm256_square_ps(_mm256_mul_ps(texel_B_g, inv255));
+				texel_B_b = _mm256_square_ps(_mm256_mul_ps(texel_B_b, inv255));
+				texel_B_a = _mm256_mul_ps(texel_B_a, inv255);
 
-			texel_C_r = _mm256_square_ps(_mm256_mul_ps(texel_C_r, inv255));
-			texel_C_g = _mm256_square_ps(_mm256_mul_ps(texel_C_g, inv255));
-			texel_C_b = _mm256_square_ps(_mm256_mul_ps(texel_C_b, inv255));
-			texel_C_a = _mm256_mul_ps(texel_C_a, inv255);
+				texel_C_r = _mm256_square_ps(_mm256_mul_ps(texel_C_r, inv255));
+				texel_C_g = _mm256_square_ps(_mm256_mul_ps(texel_C_g, inv255));
+				texel_C_b = _mm256_square_ps(_mm256_mul_ps(texel_C_b, inv255));
+				texel_C_a = _mm256_mul_ps(texel_C_a, inv255);
 
-			texel_D_r = _mm256_square_ps(_mm256_mul_ps(texel_D_r, inv255));
-			texel_D_g = _mm256_square_ps(_mm256_mul_ps(texel_D_g, inv255));
-			texel_D_b = _mm256_square_ps(_mm256_mul_ps(texel_D_b, inv255));
-			texel_D_a = _mm256_mul_ps(texel_D_a, inv255);
+				texel_D_r = _mm256_square_ps(_mm256_mul_ps(texel_D_r, inv255));
+				texel_D_g = _mm256_square_ps(_mm256_mul_ps(texel_D_g, inv255));
+				texel_D_b = _mm256_square_ps(_mm256_mul_ps(texel_D_b, inv255));
+				texel_D_a = _mm256_mul_ps(texel_D_a, inv255);
 
-			//lerp(lerp(),lerp())
-			__m256 f_x_rem = _mm256_sub_ps(one, f_x);
-			__m256 f_y_rem = _mm256_sub_ps(one, f_y);
-			__m256 l0 = _mm256_mul_ps(f_y_rem, f_x_rem);
-			__m256 l1 = _mm256_mul_ps(f_y_rem, f_x);
-			__m256 l2 = _mm256_mul_ps(f_y, f_x_rem);
-			__m256 l3 = _mm256_mul_ps(f_y, f_x);
-			__m256 texel_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_r), _mm256_mul_ps(l1, texel_B_r)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_r), _mm256_mul_ps(l3, texel_D_r)));
-			__m256 texel_g = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_g), _mm256_mul_ps(l1, texel_B_g)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_g), _mm256_mul_ps(l3, texel_D_g)));
-			__m256 texel_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_b), _mm256_mul_ps(l1, texel_B_b)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_b), _mm256_mul_ps(l3, texel_D_b)));
-			__m256 texel_a = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_a), _mm256_mul_ps(l1, texel_B_a)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_a), _mm256_mul_ps(l3, texel_D_a)));
+				//lerp(lerp(),lerp())
+				__m256 f_x_rem = _mm256_sub_ps(one, f_x);
+				__m256 f_y_rem = _mm256_sub_ps(one, f_y);
+				__m256 l0 = _mm256_mul_ps(f_y_rem, f_x_rem);
+				__m256 l1 = _mm256_mul_ps(f_y_rem, f_x);
+				__m256 l2 = _mm256_mul_ps(f_y, f_x_rem);
+				__m256 l3 = _mm256_mul_ps(f_y, f_x);
+				__m256 texel_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_r), _mm256_mul_ps(l1, texel_B_r)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_r), _mm256_mul_ps(l3, texel_D_r)));
+				__m256 texel_g = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_g), _mm256_mul_ps(l1, texel_B_g)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_g), _mm256_mul_ps(l3, texel_D_g)));
+				__m256 texel_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_b), _mm256_mul_ps(l1, texel_B_b)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_b), _mm256_mul_ps(l3, texel_D_b)));
+				__m256 texel_a = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(l0, texel_A_a), _mm256_mul_ps(l1, texel_B_a)), _mm256_add_ps(_mm256_mul_ps(l2, texel_C_a), _mm256_mul_ps(l3, texel_D_a)));
 
-			//hadamard
-			texel_r = _mm256_mul_ps(texel_r, color_r);
-			texel_g = _mm256_mul_ps(texel_g, color_g);
-			texel_b = _mm256_mul_ps(texel_b, color_b);
-			texel_a = _mm256_mul_ps(texel_a, color_a);
+				//hadamard
+				texel_r = _mm256_mul_ps(texel_r, color_r);
+				texel_g = _mm256_mul_ps(texel_g, color_g);
+				texel_b = _mm256_mul_ps(texel_b, color_b);
+				texel_a = _mm256_mul_ps(texel_a, color_a);
 
-			//clamp01
-			texel_r = _mm256_min_ps(_mm256_max_ps(texel_r, zero),one);
-			texel_g = _mm256_min_ps(_mm256_max_ps(texel_g, zero),one);
-			texel_b = _mm256_min_ps(_mm256_max_ps(texel_b, zero),one);
-			texel_a = _mm256_min_ps(_mm256_max_ps(texel_a, zero),one);
+				//clamp01
+				texel_r = _mm256_min_ps(_mm256_max_ps(texel_r, zero), one);
+				texel_g = _mm256_min_ps(_mm256_max_ps(texel_g, zero), one);
+				texel_b = _mm256_min_ps(_mm256_max_ps(texel_b, zero), one);
+				texel_a = _mm256_min_ps(_mm256_max_ps(texel_a, zero), one);
 
-			//srgb255_to_linear1
-			dest_r = _mm256_square_ps(_mm256_mul_ps(dest_r, inv255));
-			dest_g = _mm256_square_ps(_mm256_mul_ps(dest_g, inv255));
-			dest_b = _mm256_square_ps(_mm256_mul_ps(dest_b, inv255));
-			dest_a = _mm256_mul_ps(dest_a, inv255);
+				//srgb255_to_linear1
+				dest_r = _mm256_square_ps(_mm256_mul_ps(dest_r, inv255));
+				dest_g = _mm256_square_ps(_mm256_mul_ps(dest_g, inv255));
+				dest_b = _mm256_square_ps(_mm256_mul_ps(dest_b, inv255));
+				dest_a = _mm256_mul_ps(dest_a, inv255);
 
-			//v4 blended = (1.f - texel.a) * dest + texel;
-			__m256 texel_a_rem = _mm256_sub_ps(one, texel_a);
-			blended_r = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_r), texel_r);
-			blended_g = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_g), texel_g);
-			blended_b = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_b), texel_b);
-			blended_a = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_a), texel_a);
+				//v4 blended = (1.f - texel.a) * dest + texel;
+				__m256 texel_a_rem = _mm256_sub_ps(one, texel_a);
+				__m256 blended_r = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_r), texel_r);
+				__m256 blended_g = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_g), texel_g);
+				__m256 blended_b = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_b), texel_b);
+				__m256 blended_a = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_a), texel_a);
 
-			//linear1_to_srgb255
-			blended_r = _mm256_mul_ps(_mm256_sqrt_ps(blended_r), one_255);
-			blended_g = _mm256_mul_ps(_mm256_sqrt_ps(blended_g), one_255);
-			blended_b = _mm256_mul_ps(_mm256_sqrt_ps(blended_b), one_255);
-			blended_a = _mm256_mul_ps(blended_a, one_255);
+				//linear1_to_srgb255
+				blended_r = _mm256_mul_ps(_mm256_sqrt_ps(blended_r), one_255);
+				blended_g = _mm256_mul_ps(_mm256_sqrt_ps(blended_g), one_255);
+				blended_b = _mm256_mul_ps(_mm256_sqrt_ps(blended_b), one_255);
+				blended_a = _mm256_mul_ps(blended_a, one_255);
 
-			for (i32 p_idx = 0; p_idx < 8; p_idx++) {
-				//round_f32_to_u32 & write
-				if(should_fill[p_idx])
-					*(pixel+p_idx) = (u32)(blended_a.m256_f32[p_idx] + .5f) << 24 | (u32)(blended_r.m256_f32[p_idx] + .5f) << 16 | (u32)(blended_g.m256_f32[p_idx] + .5f) << 8 | (u32)(blended_b.m256_f32[p_idx] + .5f) << 0;
+				//Round and convert f32 to u32, TODO(fran): casey said that default conversion is always rouding, find out if that's also true for AVX
+				__m256i i_blended_r = _mm256_cvtps_epi32(blended_r);
+				__m256i i_blended_g = _mm256_cvtps_epi32(blended_g);
+				__m256i i_blended_b = _mm256_cvtps_epi32(blended_b);
+				__m256i i_blended_a = _mm256_cvtps_epi32(blended_a);
+				//NOTE: doing the conversion earlier allows for a much simpler "unpacking" method, instead of using the unpack intrinsics (which are pretty annoying in __m256) we do the good ol' bit shifting
+#if 0
+			//Kind of Structured Art again, for helping with making sure you did it right, NOTE: thanks to that we find out that for __m256 it picks the low part of each 128 section of the register, NOT the low 128, so when unpacking we get B0R0B1R1B4R4B5R5
+				u32 Rs[8]{ 0x00000050,0x00000051,0x00000052,0x00000053,0x00000054,0x00000055,0x00000056,0x00000057 }; //REMEMBER: make sure your test case can produce the values you are working with (in this case we need the top 3 bytes zeroed out)
+				u32 Gs[8]{ 0x000000C0,0x000000C1,0x000000C2,0x000000C3,0x000000C4,0x000000C5,0x000000C6,0x000000C7 };
+				u32 Bs[8]{ 0x000000B0,0x000000B1,0x000000B2,0x000000B3,0x000000B4,0x000000B5,0x000000B6,0x000000B7 };
+				u32 As[8]{ 0x000000A0,0x000000A1,0x000000A2,0x000000A3,0x000000A4,0x000000A5,0x000000A6,0x000000A7 };
+				i_blended_r = *(__m256i*)Rs;
+				i_blended_g = *(__m256i*)Gs;
+				i_blended_b = *(__m256i*)Bs;
+				i_blended_a = *(__m256i*)As;
+#endif
+				//TODO(fran): shift intrinsics need AVX2, any way to use AVX instead? we could cheat with SSE but it'd be pretty ugly
+				//shifting and oring the values together
+				__m256i out = _mm256_or_si256(_mm256_or_si256(_mm256_or_si256(_mm256_slli_epi32(i_blended_r, 16), _mm256_slli_epi32(i_blended_g, 8)), i_blended_b), _mm256_slli_epi32(i_blended_a, 24));
 
-			}
-					//END_TIMED_BLOCK(fill_pixel);
+				__m256i masked_out = _mm256_or_si256(_mm256_and_si256(write_mask, out), _mm256_andnot_si256(write_mask, original_dest));
+
+#if 0 //TODO(fran): why do all these generate the same mov instruction, compiler ignoring me? Also why dont I have the alignment problem?
+				* (__m256i*)pixel = masked_out;
+#elif 1
+				_mm256_store_si256((__m256i*)pixel, masked_out);
+#else
+				_mm256_storeu_si256((__m256i*)pixel, masked_out);
+#endif
+
+#if 0
+				//NOTE: handmade 117: first half hour, unpack explanation and the usefulness of unpack order
+
+				//NOTE: if you need things to stay in floating point you need to go the unpack route
+				__m256i R5B5R4B4R1B1R0B0 = _mm256_unpacklo_epi32(_mm256_castps_si256(blended_b), _mm256_castps_si256(blended_r)); //TODO(fran): requires AVX2, would be nice to do it in a way that just used AVX
+				__m256i A5G5A4G4A1G1A0G0 = _mm256_unpacklo_epi32(_mm256_castps_si256(blended_g), _mm256_castps_si256(blended_a));
+
+				__m256i R7B7R6B6R3B3R2B2 = _mm256_unpackhi_epi32(_mm256_castps_si256(blended_b), _mm256_castps_si256(blended_r));
+				__m256i A7G7A6G6A3G3A2G2 = _mm256_unpackhi_epi32(_mm256_castps_si256(blended_g), _mm256_castps_si256(blended_a));
+
+				__m256i ARGB4ARGB0 = _mm256_unpacklo_epi32(R5B5R4B4R1B1R0B0, A5G5A4G4A1G1A0G0);
+				__m256i ARGB5ARGB1 = _mm256_unpackhi_epi32(R5B5R4B4R1B1R0B0, A5G5A4G4A1G1A0G0);
+
+				__m256i ARGB6ARGB2 = _mm256_unpacklo_epi32(R7B7R6B6R3B3R2B2, A7G7A6G6A3G3A2G2);
+				__m256i ARGB7ARGB3 = _mm256_unpackhi_epi32(R7B7R6B6R3B3R2B2, A7G7A6G6A3G3A2G2);
+
+				for (i32 p_idx = 0; p_idx < 8; p_idx++) {
+					//round_f32_to_u32 & write
+					//if(should_fill[p_idx])
+					*(pixel + p_idx) = (u32)(blended_a.m256_f32[p_idx] + .5f) << 24 | (u32)(blended_r.m256_f32[p_idx] + .5f) << 16 | (u32)(blended_g.m256_f32[p_idx] + .5f) << 8 | (u32)(blended_b.m256_f32[p_idx] + .5f) << 0;
+
+				}
+#endif
+				//END_TIMED_BLOCK(fill_pixel);
+			//}
 			pixel+=8;
 		}
 		row += buf->pitch;

@@ -1060,6 +1060,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
             v2 y_axis = (e.collision.total_area.radius.y * 2) * perp(x_axis);
             x_axis *= (e.collision.total_area.radius.x * 2);
 #endif
+            //TODO(fran): one thing we could do is creating our own logic for rendering tileable objs outside the renderer, we allocate N wall buffers and do it there, it might be too expensive though, also we would need some type of dynamic storage I think
             push_tileable(rg, origin, x_axis, y_axis, e.z_layer, &gs->wall_mask, &gs->wall_tile, { 0, e.anim_wall_texture }, v2{ 1.f,1.f }*1.f);
         } break;
         case entity_word:
@@ -1180,7 +1181,9 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
          }
          //This is important cause intel didnt provide a way to load the data by strides (in SSE, in AVX they added some instructions which seem very costly from what I read, gotta test), eg saying load every fourth byte, NEON does have this instructions but intel was lazy I guess, too hard
     Intel intrinsics guide: https://software.intel.com/sites/landingpage/IntrinsicsGuide/
+    -Little endian easy remainder: means that it starts by loading into the least significant portion of the register
 */
+
 
 //TODO(fran): read the intel arquitecture manual
 
