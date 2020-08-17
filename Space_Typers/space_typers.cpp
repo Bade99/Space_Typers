@@ -1158,6 +1158,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
 /*NOTE:
     Latency: how long it takes for an instruction from being issued to being complete (important for short sets of data)
     Throughput: how many of them can I do when the pipeline is full (important for large sets of data)
+        1 -> you can do one in a cycle
+        .33 -> you can do three in a cycle
     Drainout: flushing the pipeline at the end
     Basics of Optimization: make sure the memory doesnt stall you and make sure you make the least amount of work on it as possible
     (handmade 113)
@@ -1167,6 +1169,8 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         -3rd step: with the data from 1 and 2 make an estimate of the amount you think you should be able to cut down
         -4th step: prepare your function for optimization, aka remove all "zero cost abstractions"
         -5th step: "wide strategy" aka how are you gonna operate wide on the things you have, are they all the same and easily packed?, in the case of rendering, do you want to have a pixel in each lane? wanna have Rs in one lane, Gs in another and so on? usually alpha is treated different from rgb so you probably dont want a lane to be the full pixel
+        -6th: once you have everything converted to SIMD, count all the intrinsics that you're calling in the loop and multiply each count by it's throughput (macros are your friend), then divide by the size of your wide lane (AVX->8 SSe->4), that should give you a rough estimate of how close you're to the theoretical maximum (+- some caveats)
+            -A more proper way to do it would be with IACA (intel arch code analyzer) (handmade 120)
     Efficiency: the algorithm, doing the least work you can
     Overdraw: how many times do you write the same pixel -> Renderer Efficiency
     AOS vs SOA:
