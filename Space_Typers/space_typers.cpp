@@ -841,7 +841,7 @@ void game_update_and_render(game_memory* memory, game_framebuffer* frame_buf, ga
         level1.layer_nfo.layers[0].current_scale = 1.f; //background
         level1.layer_nfo.layers[0].scale_factor = .1f;
         level1.layer_nfo.layers[1].current_scale = 1.f; //entities
-        level1.layer_nfo.layers[1].scale_factor = 1.f;
+        level1.layer_nfo.layers[1].scale_factor = 7.82475f;
         level1.layer_nfo.layers[2].current_scale = 1.f; //menu and mouse
         level1.layer_nfo.layers[2].scale_factor = 0.f;
         level2.layer_nfo = level1.layer_nfo;

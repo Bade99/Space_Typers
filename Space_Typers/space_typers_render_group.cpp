@@ -702,6 +702,7 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 #define _IACA
 #ifdef _IACA
 #include "..\..\iacaMarks.h" //HACK, I dont think I can "distribute" the .h file //TODO(fran): Im liking more and more casey's idea of substing a drive, I'd say for now add a folder before the project's one and throw iaca there and use ..\..\iaca
+//TODO(fran): iaca is no longer being developed for, try https://llvm.org/docs/CommandGuide/llvm-mca.html
 #else
 #define IACA_VC64_START 
 #define IACA_VC64_END 
@@ -777,7 +778,7 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 			//NOTE: REMEMBER: (still inside the for loop from 0 to 8) somehow just reducing this 3 (from p_x to u) to their basic form, without doing any SIMD, removed almost 30 cycles, wtf? yet again Zero Cost Abstractions do NOT exist (2020 msvc)
 			//REMEMBER: handmade 119 first 20 min casey moved p_x/y d_x/y and u/v out of the for x loop and into the for y loop, he got a bit of a performance win but I didnt get the same results, always equal or worse, so Im leaving it as is.
 			//	Still the concept he introduced is very nice which is finding constant operations, things that you always do in the x loop which could be pre-done only once in the y loop, for example the subtraction to get d_x/y is actually constant, so we can pre-subtract in the y loop
-			IACA_VC64_START;
+			IACA_VC64_START; //REMEMBER: pretty nice way to set markers inside the exe with __writegsbyte and choosing a very unlikely instruction operation
 			__m256 p_x = _mm256_set_ps( (f32)(x_it + 7), (f32)(x_it + 6), (f32)(x_it + 5), (f32)(x_it + 4), (f32)(x_it + 3), (f32)(x_it + 2), (f32)(x_it + 1), (f32)(x_it + 0));
 			__m256 p_y = _mm256_set1_ps((f32)y);
 			//p - origin
@@ -811,25 +812,69 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 				__m256 f_x = _mm256_sub_ps(t_x, _mm256_cvtepi32_ps(i_x));
 				__m256 f_y = _mm256_sub_ps(t_y, _mm256_cvtepi32_ps(i_y));
 
-#if 0
-				__m256i packed_A;
-				__m256i packed_B;
-				__m256i packed_C;
-				__m256i packed_D;
-				for (i32 p_idx = 0; p_idx < 8; p_idx++) {
-					//game_assert(i_x.m256i_i32[p_idx] >= 0 && i_x.m256i_i32[p_idx] < texture->width);
-					//game_assert(i_y.m256i_i32[p_idx] >= 0 && i_y.m256i_i32[p_idx] < texture->height);
+#if 1
+				//sample_bilinear
+				u8* texture_mem = (u8*)texture->mem; i32 texture_pitch = texture->pitch; //NOTE: dereferencing texture-> generated aliasing problems for casey, I dont seem to have those problems, either the compiler got cleverer or there's something bigger, like the texture fetching itself, that doesnt allow for the cycle count to decrease
 
-					//TODO(fran): AVX2 has "gather" intrinsics which is what I think we need to make this into SIMD
+				i_x = _mm256_slli_epi32(i_x, 2); //multiplying by 4 (aka img_bytes_per_pixel)
+				__m256i texture_pitch8x = _mm256_set1_epi32(texture_pitch);
+				i_y = _mm256_mullo_epi32(i_y, texture_pitch8x);
+				__m256i fetch = _mm256_add_epi32(i_x, i_y);
+				i32 fetch0 = fetch.m256i_i32[0];
+				i32 fetch1 = fetch.m256i_i32[1];
+				i32 fetch2 = fetch.m256i_i32[2];
+				i32 fetch3 = fetch.m256i_i32[3];
+				i32 fetch4 = fetch.m256i_i32[4];
+				i32 fetch5 = fetch.m256i_i32[5];
+				i32 fetch6 = fetch.m256i_i32[6];
+				i32 fetch7 = fetch.m256i_i32[7];
+				
+				u8* texel_ptr0 = texture_mem + fetch0;
+				u8* texel_ptr1 = texture_mem + fetch1;
+				u8* texel_ptr2 = texture_mem + fetch2;
+				u8* texel_ptr3 = texture_mem + fetch3;
+				u8* texel_ptr4 = texture_mem + fetch4;
+				u8* texel_ptr5 = texture_mem + fetch5;
+				u8* texel_ptr6 = texture_mem + fetch6;
+				u8* texel_ptr7 = texture_mem + fetch7;
 
-					//sample_bilinear
-					u8* texel_ptr = ((u8*)texture->mem + i_y.m256i_i32[p_idx] * texture->pitch + i_x.m256i_i32[p_idx] * IMG_BYTES_PER_PIXEL); //NOTE: dereferencing texture-> generated aliasing problems for casey, I dont seem to have those problems, either the compiler got cleverer or there's something bigger, like the texture fetching itself, that doesnt allow for the cycle count to decrease
-					packed_A.m256i_u32[p_idx] = *(u32*)texel_ptr;
-					packed_B.m256i_u32[p_idx] = *(u32*)(texel_ptr + IMG_BYTES_PER_PIXEL);
-					packed_C.m256i_u32[p_idx] = *(u32*)(texel_ptr + texture->pitch);
-					packed_D.m256i_u32[p_idx] = *(u32*)(texel_ptr + texture->pitch + IMG_BYTES_PER_PIXEL);
-				}
-#else //2 cycles faster
+				__m256i packed_A = _mm256_setr_epi32(*(u32*)texel_ptr0,
+													 *(u32*)texel_ptr1,
+													 *(u32*)texel_ptr2,
+													 *(u32*)texel_ptr3,
+													 *(u32*)texel_ptr4, 
+													 *(u32*)texel_ptr5, 
+													 *(u32*)texel_ptr6,
+													 *(u32*)texel_ptr7);
+
+				__m256i packed_B = _mm256_setr_epi32(*(u32*)(texel_ptr0 + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr1 + IMG_BYTES_PER_PIXEL),	
+													 *(u32*)(texel_ptr2 + IMG_BYTES_PER_PIXEL), 
+													 *(u32*)(texel_ptr3 + IMG_BYTES_PER_PIXEL), 
+													 *(u32*)(texel_ptr4 + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr5 + IMG_BYTES_PER_PIXEL), 
+													 *(u32*)(texel_ptr6 + IMG_BYTES_PER_PIXEL), 
+													 *(u32*)(texel_ptr7 + IMG_BYTES_PER_PIXEL));
+
+				__m256i packed_C = _mm256_setr_epi32(*(u32*)(texel_ptr0 + texture_pitch),
+													 *(u32*)(texel_ptr1 + texture_pitch),
+													 *(u32*)(texel_ptr2 + texture_pitch),
+													 *(u32*)(texel_ptr3 + texture_pitch),
+													 *(u32*)(texel_ptr4 + texture_pitch),
+													 *(u32*)(texel_ptr5 + texture_pitch),
+													 *(u32*)(texel_ptr6 + texture_pitch),
+													 *(u32*)(texel_ptr7 + texture_pitch));
+
+				__m256i packed_D = _mm256_setr_epi32(*(u32*)(texel_ptr0 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr1 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr2 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr3 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr4 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr5 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr6 + texture_pitch + IMG_BYTES_PER_PIXEL),
+													 *(u32*)(texel_ptr7 + texture_pitch + IMG_BYTES_PER_PIXEL));
+
+#else //slower?!, these gather instructions are no good, or im no good with them
 				i32* texture_mem = (i32*)texture->mem;//NOTE: I leave this inside the loop cause compiler is doing something smarter than taking them out, dont know what but it's doing it
 				i32 scalar_texture_pitch = texture->pitch;
 				__m256i texture_pitch = _mm256_set1_epi32(scalar_texture_pitch);
@@ -846,11 +891,10 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 				__m256i packed_C = _mm256_i32gather_epi32(texture_mem, texture_mem_offset, 1);
 				texture_mem_offset = _mm256_add_epi32(texture_mem_offset, img_bytes_per_pixel);
 				__m256i packed_D = _mm256_i32gather_epi32(texture_mem, texture_mem_offset, 1);
-
+				//NOTE: when iaca refers to bubbles on the front end it's talking latency bubbles, aka time when it's doing nothing on some port cause it waiting for something else, in this case the massive gather instructions
 #endif
 
 #if 1
-
 				//REMEMBER: just the fact of moving this out of the conditional uv check reduced another 10 cycles, more "straighforward" work equals faster some times
 				//				and moving dest out of the conditional also reduced cycles, at least 5
 				//unpack_4x8 for 4 samples
