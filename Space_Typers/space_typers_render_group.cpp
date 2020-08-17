@@ -757,6 +757,7 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 	__m256 zero = _mm256_set1_ps(.0f);
 	__m256 one_255 = _mm256_set1_ps(255.f);
 	__m256 inv255 = _mm256_set1_ps(1.f / 255.f);
+	__m256 squared255 = _mm256_set1_ps(255.f * 255.f);
 	__m256 color_r = _mm256_set1_ps(color.r);
 	__m256 color_g = _mm256_set1_ps(color.g);
 	__m256 color_b = _mm256_set1_ps(color.b);
@@ -848,7 +849,7 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 
 #endif
 
-#if 1 //NOTE: from what is a ~26 cycle loop, 11 cycles occupy what is outside this #if, so this whole "calculation" part is around 15 cycles
+#if 1
 
 				//REMEMBER: just the fact of moving this out of the conditional uv check reduced another 10 cycles, more "straighforward" work equals faster some times
 				//				and moving dest out of the conditional also reduced cycles, at least 5
@@ -884,25 +885,21 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 #define _mm256_square_ps(a) _mm256_mul_ps(a,a)
 
 				//srgb255_to_linear1 for 4 samples
-				texel_A_r = _mm256_square_ps(_mm256_mul_ps(texel_A_r, inv255));
-				texel_A_g = _mm256_square_ps(_mm256_mul_ps(texel_A_g, inv255));
-				texel_A_b = _mm256_square_ps(_mm256_mul_ps(texel_A_b, inv255));
-				texel_A_a = _mm256_mul_ps(texel_A_a, inv255);
+				texel_A_r = _mm256_square_ps(texel_A_r); //REMEMBER: we previously moved this guys to 0-1 space, now we leave them in 0-255, on squaring they go to 0-65025, the sqrt later moves them back. No real need to always work in 0-1 (hopefully float precision also agrees)
+				texel_A_g = _mm256_square_ps(texel_A_g);
+				texel_A_b = _mm256_square_ps(texel_A_b);
 
-				texel_B_r = _mm256_square_ps(_mm256_mul_ps(texel_B_r, inv255));
-				texel_B_g = _mm256_square_ps(_mm256_mul_ps(texel_B_g, inv255));
-				texel_B_b = _mm256_square_ps(_mm256_mul_ps(texel_B_b, inv255));
-				texel_B_a = _mm256_mul_ps(texel_B_a, inv255);
+				texel_B_r = _mm256_square_ps(texel_B_r);
+				texel_B_g = _mm256_square_ps(texel_B_g);
+				texel_B_b = _mm256_square_ps(texel_B_b);
 
-				texel_C_r = _mm256_square_ps(_mm256_mul_ps(texel_C_r, inv255));
-				texel_C_g = _mm256_square_ps(_mm256_mul_ps(texel_C_g, inv255));
-				texel_C_b = _mm256_square_ps(_mm256_mul_ps(texel_C_b, inv255));
-				texel_C_a = _mm256_mul_ps(texel_C_a, inv255);
+				texel_C_r = _mm256_square_ps(texel_C_r);
+				texel_C_g = _mm256_square_ps(texel_C_g);
+				texel_C_b = _mm256_square_ps(texel_C_b);
 
-				texel_D_r = _mm256_square_ps(_mm256_mul_ps(texel_D_r, inv255));
-				texel_D_g = _mm256_square_ps(_mm256_mul_ps(texel_D_g, inv255));
-				texel_D_b = _mm256_square_ps(_mm256_mul_ps(texel_D_b, inv255));
-				texel_D_a = _mm256_mul_ps(texel_D_a, inv255);
+				texel_D_r = _mm256_square_ps(texel_D_r);
+				texel_D_g = _mm256_square_ps(texel_D_g);
+				texel_D_b = _mm256_square_ps(texel_D_b);
 
 				//lerp(lerp(),lerp())
 				__m256 f_x_rem = _mm256_sub_ps(one, f_x);
@@ -924,36 +921,34 @@ void game_render_rectangle_fast(img* buf, v2 origin, v2 x_axis, v2 y_axis, v4 co
 
 				//clamp01
 #if 1 //Another neglibile performance increase (maybe 1 cycle), the pipeline is too smart
-				texel_r = _mm256_min_ps(_mm256_max_ps(texel_r, zero), one);
-				texel_g = _mm256_min_ps(_mm256_max_ps(texel_g, zero), one);
-				texel_b = _mm256_min_ps(_mm256_max_ps(texel_b, zero), one);
-				texel_a = _mm256_min_ps(_mm256_max_ps(texel_a, zero), one);
+				texel_r = _mm256_min_ps(_mm256_max_ps(texel_r, zero), squared255);
+				texel_g = _mm256_min_ps(_mm256_max_ps(texel_g, zero), squared255);
+				texel_b = _mm256_min_ps(_mm256_max_ps(texel_b, zero), squared255);
+				//texel_a = _mm256_min_ps(_mm256_max_ps(texel_a, zero), one);//TODO(fran):clamp alpha? I think it'd be clamped to 255 instead of one
 #endif
 
 				//srgb255_to_linear1
-				dest_r = _mm256_square_ps(_mm256_mul_ps(dest_r, inv255));
-				dest_g = _mm256_square_ps(_mm256_mul_ps(dest_g, inv255));
-				dest_b = _mm256_square_ps(_mm256_mul_ps(dest_b, inv255));
-				dest_a = _mm256_mul_ps(dest_a, inv255);
+				dest_r = _mm256_square_ps(dest_r);
+				dest_g = _mm256_square_ps(dest_g);
+				dest_b = _mm256_square_ps(dest_b);
 
 				//v4 blended = (1.f - texel.a) * dest + texel;
-				__m256 texel_a_rem = _mm256_sub_ps(one, texel_a);
+				__m256 texel_a_rem = _mm256_sub_ps(one, _mm256_mul_ps(texel_a,inv255));
 				__m256 blended_r = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_r), texel_r);
 				__m256 blended_g = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_g), texel_g);
 				__m256 blended_b = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_b), texel_b);
 				__m256 blended_a = _mm256_add_ps(_mm256_mul_ps(texel_a_rem, dest_a), texel_a);
 
 				//linear1_to_srgb255
-#if 1
-				blended_r = _mm256_mul_ps(_mm256_sqrt_ps(blended_r), one_255);
-				blended_g = _mm256_mul_ps(_mm256_sqrt_ps(blended_g), one_255);
-				blended_b = _mm256_mul_ps(_mm256_sqrt_ps(blended_b), one_255);
+#if 0
+				blended_r = _mm256_sqrt_ps(blended_r);
+				blended_g = _mm256_sqrt_ps(blended_g);
+				blended_b = _mm256_sqrt_ps(blended_b);
 #else //Negligible performance increase (maybe 1 cycle) by using the reciprocal sqrt, we're reaching the limit or have some bigger issue
-				blended_r = _mm256_mul_ps(_mm256_mul_ps(blended_r,_mm256_rsqrt_ps(blended_r)), one_255);
-				blended_g = _mm256_mul_ps(_mm256_mul_ps(blended_g,_mm256_rsqrt_ps(blended_g)), one_255);
-				blended_b = _mm256_mul_ps(_mm256_mul_ps(blended_b,_mm256_rsqrt_ps(blended_b)), one_255);
+				blended_r = _mm256_mul_ps(blended_r,_mm256_rsqrt_ps(blended_r));
+				blended_g = _mm256_mul_ps(blended_g,_mm256_rsqrt_ps(blended_g));
+				blended_b = _mm256_mul_ps(blended_b,_mm256_rsqrt_ps(blended_b));
 #endif
-				blended_a = _mm256_mul_ps(blended_a, one_255);
 
 				//Round and convert f32 to u32, TODO(fran): casey said that default conversion is always rouding, find out if that's also true for AVX
 				__m256i i_blended_r = _mm256_cvtps_epi32(blended_r);
